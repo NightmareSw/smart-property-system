@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的智能HR</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        #chat-box { border: 1px solid #ccc; height: 400px; overflow-y: scroll; padding: 10px; margin-bottom: 10px; background: #f9f9f9; }
+        .user-msg { text-align: right; color: blue; margin: 5px 0; }
+        .bot-msg { text-align: left; color: green; margin: 5px 0; white-space: pre-wrap; }
+        #input-area { display: flex; gap: 10px; }
+        #input-box { flex: 1; padding: 10px; }
+        #send-btn { padding: 10px 20px; cursor: pointer; }
+        .loading { color: gray; font-style: italic; }
+    </style>
+</head>
+<body>
+    <h1>🤖 RAG 知识助手</h1>
+    <div id="chat-box">
+        <div class="bot-msg">你好！我是你的智能HR，可以计算、查时间、检索人物。</div>
+    </div>
+    <div id="input-area">
+        <input type="text" id="input-box" placeholder="输入你的问题..." />
+        <button id="send-btn">发送</button>
+    </div>
+
+    <script>
+        const chatBox = document.getElementById('chat-box');
+        const inputBox = document.getElementById('input-box');
+        const sendBtn = document.getElementById('send-btn');
+
+        // 添加消息到界面
+        function addMessage(text, isUser) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = isUser ? 'user-msg' : 'bot-msg';
+            msgDiv.textContent = text;
+            chatBox.appendChild(msgDiv);
+            chatBox.scrollTop = chatBox.scrollHeight; // 滚动到底部
+        }
+
+        // 显示“正在思考...”占位
+        function showLoading() {
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'bot-msg loading';
+            loadingDiv.id = 'loading-indicator';
+            loadingDiv.textContent = ' 思考中...';
+            chatBox.appendChild(loadingDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function removeLoading() {
+            const loading = document.getElementById('loading-indicator');
+            if (loading) loading.remove();
+        }
+
+        // 发送消息逻辑
+        async function sendMessage() {
+            const userInput = inputBox.value.trim();
+            if (!userInput) return;
+
+            // 1. 显示用户消息
+            addMessage(userInput, true);
+            inputBox.value = '';
+            inputBox.disabled = true;
+            sendBtn.disabled = true;
+
+            // 2. 显示加载中
+            showLoading();
+
+            try {
+                // 3. 调用后端 API（端口号 8080，与 app.py 中保持一致）
+                const response = await fetch('http://localhost:8080/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ input: userInput })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`服务器错误 (${response.status}): ${errorText}`);
+                }
+
+                const data = await response.json();
+                // 4. 移除加载状态，显示机器人回复
+                removeLoading();
+                addMessage(data.output, false);
+
+            } catch (error) {
+                removeLoading();
+                addMessage(`❌ 连接失败: ${error.message}，请确保后端服务已启动 (python app.py)`, false);
+            } finally {
+                inputBox.disabled = false;
+                sendBtn.disabled = false;
+                inputBox.focus();
+            }
+        }
+
+        // 绑定事件
+        sendBtn.addEventListener('click', sendMessage);
+        inputBox.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>

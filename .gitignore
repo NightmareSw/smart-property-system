@@ -1,0 +1,33 @@
+# 密钥
+.env
+src/.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 数据库 & 向量库（运行时生成）
+property.db
+chroma_db/
+chroma_announcements_db/
+
+# 模型缓存（体积大）
+models/
+
+# Excel 数据文件（含真实数据，按需上传）
+# OWNER/业主信息.xlsx
+# OWNER/物业费.xlsx
+# admin/管理员.xlsx
+
+# OS
+.DS_Store
+Thumbs.db

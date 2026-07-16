@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智慧物业管理系统</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Microsoft YaHei', Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; }
+.container { width: 100%; max-width: 700px; background: #fff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; transition: max-width 0.3s, border-radius 0.3s, height 0.3s; }
+/* 登录后全屏 */
+.container.fullscreen { max-width: 100%; height: 100vh; border-radius: 0; }
+/* 头部 */
+.header { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 24px; text-align: center; color: #fff; }
+.header h1 { font-size: 24px; margin-bottom: 4px; }
+.header p { font-size: 13px; opacity: 0.85; }
+/* 标签切换 */
+.tabs { display: flex; border-bottom: 2px solid #eee; }
+.tab { flex: 1; padding: 14px; text-align: center; cursor: pointer; font-size: 15px; background: #fafafa; border: none; transition: 0.2s; }
+.tab:hover { background: #e8f4fd; }
+.tab.active { background: #fff; border-bottom: 3px solid #4facfe; font-weight: bold; color: #4facfe; }
+/* 表单 */
+.form { padding: 24px 32px; display: none; }
+.form.active { display: block; }
+.form label { display: block; margin-bottom: 6px; font-size: 13px; color: #666; font-weight: bold; }
+.form input { width: 100%; padding: 12px; margin-bottom: 16px; border: 1px solid #ddd; border-radius: 8px; font-size: 15px; transition: border 0.2s; }
+.form input:focus { border-color: #4facfe; outline: none; box-shadow: 0 0 0 3px rgba(79,172,254,0.15); }
+.form button { width: 100%; padding: 13px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #fff; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; letter-spacing: 1px; }
+.form button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79,172,254,0.4); }
+.error { color: #e74c3c; font-size: 13px; margin-bottom: 12px; display: none; }
+/* 聊天界面（登录后） */
+.chat-view { display: none; flex-direction: column; height: 100vh; }
+.chat-view.active { display: flex; }
+.chat-header { padding: 16px 24px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #fff; display: flex; justify-content: space-between; align-items: center; }
+.chat-header .user-info { font-size: 14px; }
+.chat-header .logout-btn { background: rgba(255,255,255,0.25); color: #fff; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.chat-header .logout-btn:hover { background: rgba(255,255,255,0.4); }
+.chat-box { flex: 1; overflow-y: auto; padding: 16px 24px; background: #f7f8fc; }
+.msg { margin-bottom: 14px; max-width: 80%; word-wrap: break-word; }
+.msg.user { margin-left: auto; background: #4facfe; color: #fff; padding: 10px 16px; border-radius: 18px 18px 4px 18px; }
+.msg.bot { margin-right: auto; background: #fff; padding: 10px 16px; border-radius: 18px 18px 18px 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); white-space: pre-wrap; }
+.msg.loading { background: #eee; color: #999; font-style: italic; }
+.chat-input-area { display: flex; padding: 12px 16px; border-top: 1px solid #eee; background: #fff; }
+.chat-input-area input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 24px; font-size: 14px; outline: none; }
+.chat-input-area input:focus { border-color: #4facfe; }
+.chat-input-area button { margin-left: 10px; padding: 10px 22px; background: #4facfe; color: #fff; border: none; border-radius: 24px; cursor: pointer; font-size: 14px; }
+.chat-input-area button:hover { background: #3d9be0; }
+/* 提示卡片 */
+.hint-card { background: #fffbe6; border: 1px solid #ffe58f; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 12px; color: #ad8b00; }
+
+/* 管理后台仪表盘 */
+.dashboard { display: none; flex-direction: column; height: 100vh; }
+.dashboard.active { display: flex; }
+.dash-tabs { display: flex; border-bottom: 2px solid #eee; background: #fafafa; }
+.dash-tab { flex: 1; padding: 12px 8px; text-align: center; cursor: pointer; font-size: 14px; background: #fafafa; border: none; transition: 0.2s; }
+.dash-tab:hover { background: #e8f4fd; }
+.dash-tab.active { background: #fff; border-bottom: 3px solid #4facfe; font-weight: bold; color: #4facfe; }
+.dash-panel { display: none; flex: 1; overflow-y: auto; padding: 16px 24px; background: #f7f8fc; }
+.dash-panel.active { display: block; }
+#panel-chat.active, #rpanel-chat.active { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+#panel-chat .chat-box, #rpanel-chat .chat-box { flex: 1; overflow-y: auto; padding: 16px 24px; }
+#panel-chat .chat-input-area, #rpanel-chat .chat-input-area { flex-shrink: 0; }
+
+/* 面板中的表格 */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.data-table th { background: #f0f4ff; padding: 10px 8px; text-align: left; font-weight: 600; color: #555; border-bottom: 2px solid #e0e0e0; }
+.data-table td { padding: 8px; border-bottom: 1px solid #f0f0f0; }
+.data-table tr:hover { background: #fafbff; }
+.data-table .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 4px; border: none; cursor: pointer; margin: 0 2px; }
+.btn-edit { background: #4facfe; color: #fff; }
+.btn-edit:hover { background: #3d9be0; }
+.btn-danger { background: #e74c3c; color: #fff; }
+.btn-danger:hover { background: #c0392b; }
+.btn-success { background: #27ae60; color: #fff; }
+.btn-success:hover { background: #219a52; }
+.btn-warning { background: #f39c12; color: #fff; }
+.btn-warning:hover { background: #d68910; }
+
+/* 上传区域 */
+.upload-row { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.upload-row input[type=file] { flex: 1; min-width: 180px; }
+.upload-row button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; }
+
+/* 内联表单 */
+.inline-form { display: none; background: #fff; padding: 14px; border-radius: 8px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+.inline-form.active { display: block; }
+.inline-form input { padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; margin-right: 8px; margin-bottom: 6px; }
+.inline-form button { padding: 7px 14px; margin-right: 6px; }
+
+/* 状态提示 */
+.toast { padding: 8px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 10px; display: none; }
+.toast.success { display: block; background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+.toast.error { display: block; background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+
+/* 公告列表 */
+.ann-list { padding: 4px 0; }
+.ann-item { background: #fff; padding: 14px 16px; margin-bottom: 8px; border-radius: 8px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.06); transition: 0.15s; }
+.ann-item:hover { background: #eef6ff; box-shadow: 0 2px 8px rgba(79,172,254,0.15); }
+.ann-item .ann-title { font-size: 15px; font-weight: 600; color: #333; margin-bottom: 4px; }
+.ann-item .ann-meta { font-size: 12px; color: #999; }
+.ann-detail { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+.ann-detail h3 { font-size: 18px; margin-bottom: 8px; color: #333; }
+.ann-detail .ann-meta { font-size: 12px; color: #999; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #eee; }
+.ann-detail .ann-body { font-size: 14px; line-height: 1.8; color: #444; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<div class="container">
+    <!-- ===== 登录界面 ===== -->
+    <div id="login-view">
+        <div class="header">
+            <h1>智慧物业管理系统</h1>
+            <p>多Agent协作服务平台</p>
+        </div>
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('admin')">管理员登录</button>
+            <button class="tab" onclick="switchTab('resident')">住户登录</button>
+        </div>
+        <!-- 管理员表单 -->
+        <div class="form active" id="form-admin">
+            <div class="error" id="error-admin"></div>
+            <label>管理员账号</label>
+            <input type="text" id="admin-user" placeholder="请输入管理员账号" value="admin">
+            <label>管理员密码</label>
+            <input type="password" id="admin-pass" placeholder="请输入密码" value="admin123">
+            <button onclick="login('admin')">登录管理后台</button>
+        </div>
+        <!-- 住户表单 -->
+        <div class="form" id="form-resident">
+            <div class="error" id="error-resident"></div>
+            <label>门牌号</label>
+            <input type="text" id="resident-room" placeholder="请输入门牌号（如 101）" value="101">
+            <label>密码</label>
+            <input type="password" id="resident-pass" placeholder="请输入密码" value="101001">
+            <button onclick="login('resident')">进入客服中心</button>
+        </div>
+    </div>
+
+    <!-- ===== 住户界面 ===== -->
+    <div class="dashboard" id="resident-view">
+        <div class="chat-header">
+            <span class="user-info" id="resident-user-info"></span>
+            <button class="logout-btn" onclick="logout()">退出登录</button>
+        </div>
+        <div class="dash-tabs">
+            <button class="dash-tab active" onclick="switchResidentTab('chat')">AI客服</button>
+            <button class="dash-tab" onclick="switchResidentTab('announcements')">公告查看</button>
+        </div>
+
+        <!-- Tab 1: AI客服 -->
+        <div class="dash-panel active" id="rpanel-chat">
+            <div class="chat-box" id="rchat-box"></div>
+            <div class="chat-input-area" style="border-top:none;padding:12px 0;">
+                <input type="text" id="rchat-input" placeholder="输入你的问题..." onkeypress="if(event.key==='Enter')sendResidentMsg()">
+                <button onclick="sendResidentMsg()">发送</button>
+            </div>
+        </div>
+
+        <!-- Tab 2: 公告查看 -->
+        <div class="dash-panel" id="rpanel-announcements">
+            <div class="ann-list" id="ann-list"></div>
+            <div class="ann-detail" id="ann-detail" style="display:none;">
+                <button class="btn-sm" onclick="closeAnnDetail()" style="margin-bottom:8px;">&larr; 返回列表</button>
+                <div id="ann-detail-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 保留旧 chat-view ID 兼容 ===== -->
+    <div class="chat-view" id="chat-view" style="display:none;"></div>
+
+    <!-- ===== 管理员仪表盘 ===== -->
+    <div class="dashboard" id="dashboard">
+        <div class="chat-header">
+            <span class="user-info" id="dash-user-info"></span>
+            <button class="logout-btn" onclick="logout()">退出登录</button>
+        </div>
+        <div class="dash-tabs">
+            <button class="dash-tab active" onclick="switchDashTab('chat')">AI助手</button>
+            <button class="dash-tab" onclick="switchDashTab('files')">公告文件</button>
+            <button class="dash-tab" onclick="switchDashTab('owners')">业主管理</button>
+        </div>
+
+        <!-- Tab 1: AI助手 -->
+        <div class="dash-panel active" id="panel-chat">
+            <div class="chat-box" id="dash-chat-box"></div>
+            <div class="chat-input-area" style="border-top:none;padding:12px 0;">
+                <input type="text" id="dash-chat-input" placeholder="输入你的问题..." onkeypress="if(event.key==='Enter')sendDashMsg()" style="flex:1;">
+                <button onclick="sendDashMsg()">发送</button>
+            </div>
+        </div>
+
+        <!-- Tab 2: 公告文件管理 -->
+        <div class="dash-panel" id="panel-files">
+            <div class="toast" id="file-toast"></div>
+            <div class="upload-row">
+                <input type="file" id="file-input" accept=".txt,.pdf">
+                <button class="btn-success" onclick="uploadFile()">上传文件</button>
+                <button class="btn-warning" onclick="reindexFiles()">重建索引</button>
+            </div>
+            <table class="data-table" id="file-table">
+                <thead><tr><th>文件名</th><th>类型</th><th>大小</th><th>上传日期</th><th>公告ID</th><th>操作</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- Tab 3: 业主管理 -->
+        <div class="dash-panel" id="panel-owners">
+            <div class="toast" id="owner-toast"></div>
+            <button class="btn-success" onclick="showAddOwnerForm()" style="margin-bottom:14px;">+ 新增业主</button>
+            <div class="inline-form" id="owner-form">
+                <input type="text" id="of-room" placeholder="门牌号">
+                <input type="text" id="of-name" placeholder="姓名">
+                <input type="text" id="of-phone" placeholder="电话">
+                <input type="text" id="of-password" placeholder="密码">
+                <button class="btn-success" onclick="saveOwner()">保存</button>
+                <button onclick="hideOwnerForm()">取消</button>
+            </div>
+            <table class="data-table" id="owner-table">
+                <thead><tr><th>门牌号</th><th>姓名</th><th>电话</th><th>密码 <button class="btn-sm" onclick="togglePwdCol()" style="font-size:10px;">显示</button></th><th>操作</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentRole = 'admin';
+let token = '';
+let chatApiUrl = '';
+
+// ---- 切换登录标签 ----
+function switchTab(role) {
+    currentRole = role;
+    document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i===0 && role==='admin') || (i===1 && role==='resident')));
+    document.querySelectorAll('.form').forEach(f => f.classList.remove('active'));
+    document.getElementById('form-' + role).classList.add('active');
+}
+
+// ---- 登录 ----
+async function login(role) {
+    const errEl = document.getElementById('error-' + role);
+    errEl.style.display = 'none';
+
+    let body = { role: role };
+    if (role === 'admin') {
+        body.username = document.getElementById('admin-user').value.trim();
+        body.password = document.getElementById('admin-pass').value.trim();
+    } else {
+        body.room_number = document.getElementById('resident-room').value.trim();
+        body.resident_password = document.getElementById('resident-pass').value.trim();
+    }
+
+    try {
+        const resp = await fetch('/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const data = await resp.json();
+        if (!resp.ok) { errEl.textContent = data.detail || '登录失败'; errEl.style.display = 'block'; return; }
+
+        token = data.token;
+        currentRole = data.role;
+        chatApiUrl = data.role === 'admin' ? '/chat/admin' : '/chat/resident';
+
+        document.getElementById('login-view').style.display = 'none';
+        document.querySelector('.container').classList.add('fullscreen');
+
+        if (data.role === 'admin') {
+            // 管理员 → 仪表盘
+            document.getElementById('dashboard').classList.add('active');
+            document.getElementById('dash-user-info').textContent = '当前: ' + data.display_name + ' (管理员) | 管理后台';
+            document.getElementById('dash-chat-box').innerHTML = '';
+            switchDashTab('chat');
+            addDashHint('你可以：查看/新增/修改/删除公告 | 管理物业费 | 管理业主信息');
+            addDashMsg('你好，管理员！我是你的物业管理助手。', 'bot');
+            loadFileList();
+            loadOwners();
+        } else {
+            // 住户 → 标签页界面（AI客服 + 公告查看）
+            document.getElementById('resident-view').classList.add('active');
+            document.getElementById('resident-user-info').textContent = '当前: ' + data.display_name + ' (住户)';
+            document.getElementById('rchat-box').innerHTML = '';
+            switchResidentTab('chat');
+            addResidentHint('你可以：查询公告（如"最近有什么停水通知"）/ 查询我的物业费缴纳情况');
+            addResidentMsg('你好！我是你的专属物业客服。有什么可以帮你的？', 'bot');
+        }
+    } catch (e) {
+        errEl.textContent = '网络错误，请检查服务是否启动';
+        errEl.style.display = 'block';
+    }
+}
+
+// ---- 退出 ----
+function logout() {
+    token = '';
+    document.getElementById('login-view').style.display = '';
+    document.getElementById('chat-view').classList.remove('active');
+    document.getElementById('dashboard').classList.remove('active');
+    document.getElementById('resident-view').classList.remove('active');
+    document.querySelector('.container').classList.remove('fullscreen');
+}
+
+// ---- 发送消息 ----
+async function sendMsg() {
+    const input = document.getElementById('chat-input');
+    const text = input.value.trim();
+    if (!text) return;
+
+    addMsg(text, 'user');
+    input.value = '';
+    const loadingEl = addMsg('...思考中...', 'bot loading');
+
+    try {
+        const resp = await fetch(chatApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token, input: text })
+        });
+        const data = await resp.json();
+        loadingEl.remove();
+        if (!resp.ok) { addMsg('错误: ' + (data.detail || '未知'), 'bot'); return; }
+        addMsg(data.output, 'bot');
+    } catch (e) {
+        loadingEl.remove();
+        addMsg('连接失败: ' + e.message, 'bot');
+    }
+}
+
+// ---- 辅助 ----
+function addMsg(text, cls) {
+    const chatBox = document.getElementById('chat-box');
+    const div = document.createElement('div');
+    div.className = 'msg ' + cls;
+    div.textContent = text;
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+    return div;
+}
+
+function addHint(text) {
+    const chatBox = document.getElementById('chat-box');
+    const div = document.createElement('div');
+    div.className = 'hint-card';
+    div.textContent = '提示: ' + text;
+    chatBox.appendChild(div);
+}
+
+// ============================================================
+// 住户标签页
+// ============================================================
+
+function switchResidentTab(name) {
+    document.querySelectorAll('#resident-view .dash-tab').forEach(function(t, i) {
+        var names = ['chat', 'announcements'];
+        t.classList.toggle('active', names[i] === name);
+    });
+    document.querySelectorAll('#resident-view .dash-panel').forEach(function(p) { p.classList.remove('active'); });
+    var panel = document.getElementById('rpanel-' + name);
+    if (panel) panel.classList.add('active');
+    if (name === 'announcements') loadAnnouncementList();
+}
+
+// --- 住户聊天 ---
+async function sendResidentMsg() {
+    var input = document.getElementById('rchat-input');
+    var text = input.value.trim();
+    if (!text) return;
+
+    addResidentMsg(text, 'user');
+    input.value = '';
+    var loadingEl = addResidentMsg('...思考中...', 'bot loading');
+
+    try {
+        var resp = await fetch(chatApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token, input: text })
+        });
+        var data = await resp.json();
+        loadingEl.remove();
+        if (!resp.ok) { addResidentMsg('错误: ' + (data.detail || '未知'), 'bot'); return; }
+        addResidentMsg(data.output, 'bot');
+    } catch (e) {
+        loadingEl.remove();
+        addResidentMsg('连接失败: ' + e.message, 'bot');
+    }
+}
+
+function addResidentMsg(text, cls) {
+    var box = document.getElementById('rchat-box');
+    var div = document.createElement('div');
+    div.className = 'msg ' + cls;
+    div.textContent = text;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+    return div;
+}
+
+function addResidentHint(text) {
+    var box = document.getElementById('rchat-box');
+    var div = document.createElement('div');
+    div.className = 'hint-card';
+    div.textContent = '提示: ' + text;
+    box.appendChild(div);
+}
+
+// --- 公告查看 ---
+async function loadAnnouncementList() {
+    try {
+        var resp = await fetch('/api/announcements');
+        var data = await resp.json();
+        var listEl = document.getElementById('ann-list');
+        listEl.style.display = 'block';
+        document.getElementById('ann-detail').style.display = 'none';
+
+        if (!data.announcements || data.announcements.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center;color:#999;padding:40px;">暂无公告</div>';
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < data.announcements.length; i++) {
+            var a = data.announcements[i];
+            html += '<div class="ann-item" onclick="viewAnnDetail(' + a.id + ')">' +
+                '<div class="ann-title">' + escHtml(a.title) + '</div>' +
+                '<div class="ann-meta">' + a.publish_date + ' | ' + escHtml(a.author) + '</div>' +
+                '</div>';
+        }
+        listEl.innerHTML = html;
+    } catch (e) {
+        document.getElementById('ann-list').innerHTML = '<div style="text-align:center;color:#c00;padding:40px;">加载失败: ' + e.message + '</div>';
+    }
+}
+
+function viewAnnDetail(id) {
+    var resp = fetch('/api/get_announcement/' + id).then(function(r) { return r.json(); });
+    resp.then(function(data) {
+        document.getElementById('ann-list').style.display = 'none';
+        var detail = document.getElementById('ann-detail');
+        detail.style.display = 'block';
+        document.getElementById('ann-detail-content').innerHTML =
+            '<h3>' + escHtml(data.title) + '</h3>' +
+            '<div class="ann-meta">发布日期: ' + data.publish_date + ' | 作者: ' + escHtml(data.author) + '</div>' +
+            '<div class="ann-body">' + escHtml(data.content) + '</div>';
+    }).catch(function(e) {
+        alert('加载公告详情失败');
+    });
+}
+
+function closeAnnDetail() {
+    document.getElementById('ann-detail').style.display = 'none';
+    document.getElementById('ann-list').style.display = 'block';
+}
+
+// ============================================================
+// 管理员仪表盘
+// ============================================================
+
+function switchDashTab(name) {
+    document.querySelectorAll('.dash-tab').forEach(function(t, i) {
+        var names = ['chat', 'files', 'owners'];
+        t.classList.toggle('active', names[i] === name);
+    });
+    document.querySelectorAll('.dash-panel').forEach(function(p) { p.classList.remove('active'); });
+    document.getElementById('panel-' + name).classList.add('active');
+    if (name === 'files') loadFileList();
+    if (name === 'owners') loadOwners();
+}
+
+// --- 仪表盘聊天 ---
+async function sendDashMsg() {
+    var input = document.getElementById('dash-chat-input');
+    var text = input.value.trim();
+    if (!text) return;
+
+    addDashMsg(text, 'user');
+    input.value = '';
+    var loadingEl = addDashMsg('...思考中...', 'bot loading');
+
+    try {
+        var resp = await fetch(chatApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token, input: text })
+        });
+        var data = await resp.json();
+        loadingEl.remove();
+        if (!resp.ok) { addDashMsg('错误: ' + (data.detail || '未知'), 'bot'); return; }
+        addDashMsg(data.output, 'bot');
+    } catch (e) {
+        loadingEl.remove();
+        addDashMsg('连接失败: ' + e.message, 'bot');
+    }
+}
+
+function addDashMsg(text, cls) {
+    var box = document.getElementById('dash-chat-box');
+    var div = document.createElement('div');
+    div.className = 'msg ' + cls;
+    div.textContent = text;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+    return div;
+}
+
+function addDashHint(text) {
+    var box = document.getElementById('dash-chat-box');
+    var div = document.createElement('div');
+    div.className = 'hint-card';
+    div.textContent = '提示: ' + text;
+    box.appendChild(div);
+}
+
+// --- 公告文件管理 ---
+async function loadFileList() {
+    try {
+        var resp = await fetch('/api/adver/files?token=' + encodeURIComponent(token));
+        var data = await resp.json();
+        var tbody = document.querySelector('#file-table tbody');
+        tbody.innerHTML = '';
+        if (!data.files || data.files.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999;">暂无公告文件</td></tr>';
+            return;
+        }
+        for (var i = 0; i < data.files.length; i++) {
+            var f = data.files[i];
+            var sizeKB = (f.size_bytes / 1024).toFixed(1);
+            var annId = f.ann_id || '—';
+            tbody.innerHTML += '<tr>' +
+                '<td>' + escHtml(f.filename) + '</td>' +
+                '<td>' + f.type.toUpperCase() + '</td>' +
+                '<td>' + sizeKB + ' KB</td>' +
+                '<td>' + f.modified + '</td>' +
+                '<td>' + annId + '</td>' +
+                '<td><button class="btn-sm btn-danger" onclick="deleteFile(\'' + escAttr(f.filename) + '\')">删除</button></td>' +
+                '</tr>';
+        }
+    } catch (e) {
+        showFileToast('加载文件列表失败: ' + e.message, 'error');
+    }
+}
+
+async function uploadFile() {
+    var fileInput = document.getElementById('file-input');
+    var file = fileInput.files[0];
+    if (!file) { showFileToast('请先选择文件', 'error'); return; }
+
+    var formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        var resp = await fetch('/api/adver/upload?token=' + encodeURIComponent(token), {
+            method: 'POST', body: formData
+        });
+        var data = await resp.json();
+        if (!resp.ok) { showFileToast(data.detail || '上传失败', 'error'); return; }
+        showFileToast('上传成功: ' + data.title, 'success');
+        fileInput.value = '';
+        loadFileList();
+    } catch (e) {
+        showFileToast('上传失败: ' + e.message, 'error');
+    }
+}
+
+async function deleteFile(filename) {
+    if (!confirm('确定删除文件 "' + filename + '" 及其关联公告？')) return;
+    try {
+        var resp = await fetch('/api/adver/files/' + encodeURIComponent(filename) + '?token=' + encodeURIComponent(token), {
+            method: 'DELETE'
+        });
+        var data = await resp.json();
+        if (!resp.ok) { showFileToast(data.detail || '删除失败', 'error'); return; }
+        showFileToast('已删除: ' + filename, 'success');
+        loadFileList();
+    } catch (e) {
+        showFileToast('删除失败: ' + e.message, 'error');
+    }
+}
+
+async function reindexFiles() {
+    if (!confirm('重建索引将清空全部公告并从文件重新导入，确定继续？')) return;
+    try {
+        var resp = await fetch('/api/adver/reindex?token=' + encodeURIComponent(token), { method: 'POST' });
+        var data = await resp.json();
+        if (!resp.ok) { showFileToast(data.detail || '重建失败', 'error'); return; }
+        showFileToast('索引重建完成，共 ' + data.count + ' 条公告', 'success');
+        loadFileList();
+    } catch (e) {
+        showFileToast('重建失败: ' + e.message, 'error');
+    }
+}
+
+function showFileToast(msg, type) {
+    var el = document.getElementById('file-toast');
+    el.textContent = msg;
+    el.className = 'toast ' + type;
+    setTimeout(function() { el.className = 'toast'; }, 4000);
+}
+
+// --- 业主管理 ---
+var ownerEditing = null;
+
+async function loadOwners() {
+    try {
+        var resp = await fetch('/api/owners?token=' + encodeURIComponent(token));
+        var data = await resp.json();
+        var tbody = document.querySelector('#owner-table tbody');
+        tbody.innerHTML = '';
+        if (!data.owners || data.owners.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#999;">暂无业主信息</td></tr>';
+            return;
+        }
+        var showPwd = window._showPwd || false;
+        for (var i = 0; i < data.owners.length; i++) {
+            var o = data.owners[i];
+            var pwdCell = showPwd ? escHtml(o.password||'') : '****';
+            if (ownerEditing === o.room_number) {
+                tbody.innerHTML += '<tr>' +
+                    '<td>' + escHtml(o.room_number) + '</td>' +
+                    '<td><input type="text" id="edit-name" value="' + escAttr(o.owner_name) + '" style="width:80px;"></td>' +
+                    '<td><input type="text" id="edit-phone" value="' + escAttr(o.phone||'') + '" style="width:100px;"></td>' +
+                    '<td><input type="text" id="edit-password" value="' + escAttr(o.password||'') + '" style="width:80px;"></td>' +
+                    '<td>' +
+                    '<button class="btn-sm btn-success" onclick="saveEditOwner(\'' + escAttr(o.room_number) + '\')">保存</button> ' +
+                    '<button class="btn-sm" onclick="ownerEditing=null;loadOwners();">取消</button>' +
+                    '</td></tr>';
+            } else {
+                tbody.innerHTML += '<tr>' +
+                    '<td>' + escHtml(o.room_number) + '</td>' +
+                    '<td>' + escHtml(o.owner_name) + '</td>' +
+                    '<td>' + escHtml(o.phone||'') + '</td>' +
+                    '<td>' + pwdCell + '</td>' +
+                    '<td>' +
+                    '<button class="btn-sm btn-edit" onclick="editOwner(\'' + escAttr(o.room_number) + '\')">编辑</button> ' +
+                    '<button class="btn-sm btn-danger" onclick="deleteOwner(\'' + escAttr(o.room_number) + '\')">删除</button>' +
+                    '</td></tr>';
+            }
+        }
+    } catch (e) {
+        showOwnerToast('加载业主列表失败: ' + e.message, 'error');
+    }
+}
+
+function showAddOwnerForm() {
+    document.getElementById('owner-form').classList.add('active');
+    document.getElementById('of-room').value = '';
+    document.getElementById('of-name').value = '';
+    document.getElementById('of-phone').value = '';
+    document.getElementById('of-password').value = '';
+}
+
+function hideOwnerForm() {
+    document.getElementById('owner-form').classList.remove('active');
+}
+
+async function saveOwner() {
+    var room = document.getElementById('of-room').value.trim();
+    var name = document.getElementById('of-name').value.trim();
+    var phone = document.getElementById('of-phone').value.trim();
+    var pwd = document.getElementById('of-password').value.trim();
+    if (!room || !name || !pwd) { showOwnerToast('门牌号、姓名和密码为必填项', 'error'); return; }
+
+    try {
+        var resp = await fetch('/api/owners?token=' + encodeURIComponent(token), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ room_number: room, owner_name: name, phone: phone, password: pwd })
+        });
+        var data = await resp.json();
+        if (!resp.ok) { showOwnerToast(data.detail || '新增失败', 'error'); return; }
+        showOwnerToast('业主 ' + name + '(' + room + '室) 已添加', 'success');
+        hideOwnerForm();
+        loadOwners();
+    } catch (e) {
+        showOwnerToast('新增失败: ' + e.message, 'error');
+    }
+}
+
+function editOwner(room) {
+    ownerEditing = room;
+    loadOwners();
+}
+
+async function saveEditOwner(room) {
+    var name = document.getElementById('edit-name').value.trim();
+    var phone = document.getElementById('edit-phone').value.trim();
+    var pwdInput = document.getElementById('edit-password');
+    var pwd = pwdInput ? pwdInput.value.trim() : '';
+    if (!name) { showOwnerToast('姓名不能为空', 'error'); return; }
+
+    var body = { owner_name: name, phone: phone };
+    if (pwd) body.password = pwd;
+
+    try {
+        var resp = await fetch('/api/owners/' + encodeURIComponent(room) + '?token=' + encodeURIComponent(token), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        var data = await resp.json();
+        if (!resp.ok) { showOwnerToast(data.detail || '更新失败', 'error'); return; }
+        showOwnerToast('业主 ' + room + '室 信息已更新', 'success');
+        ownerEditing = null;
+        loadOwners();
+    } catch (e) {
+        showOwnerToast('更新失败: ' + e.message, 'error');
+    }
+}
+
+async function deleteOwner(room) {
+    if (!confirm('确定删除门牌号 ' + room + ' 的业主信息？')) return;
+    try {
+        var resp = await fetch('/api/owners/' + encodeURIComponent(room) + '?token=' + encodeURIComponent(token), {
+            method: 'DELETE'
+        });
+        var data = await resp.json();
+        if (!resp.ok) { showOwnerToast(data.detail || '删除失败', 'error'); return; }
+        showOwnerToast('业主 ' + room + '室 已删除', 'success');
+        loadOwners();
+    } catch (e) {
+        showOwnerToast('删除失败: ' + e.message, 'error');
+    }
+}
+
+function showOwnerToast(msg, type) {
+    var el = document.getElementById('owner-toast');
+    el.textContent = msg;
+    el.className = 'toast ' + type;
+    setTimeout(function() { el.className = 'toast'; }, 4000);
+}
+
+function togglePwdCol() {
+    window._showPwd = !window._showPwd;
+    loadOwners();
+}
+
+// --- HTML 转义 ---
+function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escAttr(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;');
+}
+</script>
+</body>
+</html>
