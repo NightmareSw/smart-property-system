@@ -14,6 +14,7 @@ from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 
 from src.DeepSeek_v4_pro import deepseek_v4_pro
+from src.resilience import safe_chroma_search
 import src.property_db as db
 
 _llm = deepseek_v4_pro
@@ -41,23 +42,18 @@ def build_resident_agent() -> AgentExecutor:
     def search_announcements(query: str) -> str:
         """
         通过语义搜索（RAG）查找相关物业公告。不需要精确关键词，用自然语言提问即可。
-
-        例如：
-        - "最近有什么安全方面的通知？" 能匹配到"电梯维护公告"
-        - "什么时候要交钱？" 能匹配到"物业费缴纳提醒"
-        - "小区近期有什么活动？" 能匹配到"社区夏日活动通知"
+        Chroma 不可用时自动降级为关键词搜索。
 
         query: 自然语言查询（越具体越好）
         """
-        rows = db.search_announcements_rag(query)
+        # 使用容错搜索：Chroma 失败时自动降级 SQL LIKE
+        rows = safe_chroma_search(
+            db.search_announcements_rag,
+            db.search_announcements,
+            query, k=4
+        )
         if not rows:
-            # RAG 无结果时回退到 SQL Like 搜索
-            rows_like = db.search_announcements(query)
-            if not rows_like:
-                return f"未找到与'{query}'相关的公告。"
-            rows = [{"title": r["title"], "content": r["content"],
-                     "publish_date": r["publish_date"], "author": r["author"],
-                     "id": r["id"], "score": 0} for r in rows_like]
+            return f"未找到与'{query}'相关的公告。"
 
         lines = []
         for r in rows:

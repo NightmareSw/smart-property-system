@@ -22,12 +22,27 @@ from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 
+from src.resilience import retry_db
+
 DB_PATH = str(Path(__file__).parent.parent / "property.db")
 CHROMA_DIR = str(Path(__file__).parent.parent / "chroma_announcements_db")
 ADVER_DIR = str(Path(__file__).parent.parent / "ADVER")
 OWNER_EXCEL = str(Path(__file__).parent.parent / "OWNER" / "业主信息.xlsx")
 PAYMENT_EXCEL = str(Path(__file__).parent.parent / "OWNER" / "物业费.xlsx")
 ADMIN_EXCEL = str(Path(__file__).parent.parent / "admin" / "管理员.xlsx")
+
+# --- 数据库连接管理 ---
+
+def _get_conn() -> sqlite3.Connection:
+    """获取SQLite连接（WAL模式，支持并发读写）"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-8000")  # 8MB cache
+    return conn
+
 
 # --- Embedding 模型（全局单例，所有公告共享一个向量库）---
 _embed_model = SentenceTransformerEmbeddings(
@@ -139,7 +154,7 @@ def _seed_chroma():
     if _announcement_vdb._collection.count() > 0:
         return
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT id, title, content, publish_date, author FROM announcements")
@@ -301,7 +316,7 @@ def init_db():
     - 首次启动时从 Excel 导入种子数据
     - Chroma: 公告向量库（RAG 语义搜索）
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -457,7 +472,7 @@ def init_db():
 
 def get_all_owners() -> list[dict]:
     """查询全部业主"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT room_number, password, owner_name, phone FROM owners ORDER BY room_number")
@@ -469,7 +484,7 @@ def get_all_owners() -> list[dict]:
 def add_owner(room_number: str, password: str, owner_name: str, phone: str = "") -> bool:
     """新增业主，门牌号已存在时返回 False"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_conn()
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO owners (room_number, password, owner_name, phone) VALUES (?,?,?,?)",
@@ -484,7 +499,7 @@ def add_owner(room_number: str, password: str, owner_name: str, phone: str = "")
 def update_owner(room_number: str, owner_name: str = None, phone: str = None,
                  password: str = None) -> bool:
     """更新业主信息，未传的字段保持不变"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM owners WHERE room_number=?", (str(room_number).strip(),))
@@ -505,7 +520,7 @@ def update_owner(room_number: str, owner_name: str = None, phone: str = None,
 
 def delete_owner(room_number: str) -> bool:
     """删除业主"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     cur.execute("DELETE FROM owners WHERE room_number=?", (str(room_number).strip(),))
     deleted = cur.rowcount > 0
@@ -520,7 +535,7 @@ def delete_owner(room_number: str) -> bool:
 
 def authenticate(room_number: str, password: str) -> dict | None:
     """验证住户登录"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute(
@@ -538,7 +553,7 @@ def authenticate(room_number: str, password: str) -> dict | None:
 
 def get_all_admins() -> list[dict]:
     """查询全部管理员"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT username, password, name, role FROM admins")
@@ -549,7 +564,7 @@ def get_all_admins() -> list[dict]:
 
 def authenticate_admin(username: str, password: str) -> dict | None:
     """验证管理员登录"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute(
@@ -564,7 +579,7 @@ def authenticate_admin(username: str, password: str) -> dict | None:
 def add_admin(username: str, password: str, name: str = "", role: str = "admin") -> bool:
     """新增管理员，用户名已存在时返回 False"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_conn()
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO admins (username, password, name, role) VALUES (?,?,?,?)",
@@ -579,7 +594,7 @@ def add_admin(username: str, password: str, name: str = "", role: str = "admin")
 def update_admin(username: str, password: str = None, name: str = None,
                  role: str = None) -> bool:
     """更新管理员信息"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM admins WHERE username=?", (username,))
@@ -600,7 +615,7 @@ def update_admin(username: str, password: str = None, name: str = None,
 
 def delete_admin(username: str) -> bool:
     """删除管理员"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     cur.execute("DELETE FROM admins WHERE username=?", (username,))
     deleted = cur.rowcount > 0
@@ -615,7 +630,7 @@ def delete_admin(username: str) -> bool:
 
 def get_all_announcements() -> list[dict]:
     """查询全部公告"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT id, title, content, publish_date, author FROM announcements ORDER BY id DESC")
@@ -626,7 +641,7 @@ def get_all_announcements() -> list[dict]:
 
 def search_announcements(keyword: str) -> list[dict]:
     """按关键词搜索公告（模糊匹配标题和内容）"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute(
@@ -639,11 +654,12 @@ def search_announcements(keyword: str) -> list[dict]:
     return rows
 
 
+@retry_db(max_retries=3)
 def add_announcement(title: str, content: str, author: str = "物业中心",
                      source_file: str = None) -> int:
     """新增公告（SQLite + Chroma 双写），返回新记录的 id"""
     pub_date = datetime.now().strftime("%Y-%m-%d")
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO announcements (title, content, publish_date, author, source_file) "
@@ -659,7 +675,7 @@ def add_announcement(title: str, content: str, author: str = "物业中心",
 
 def update_announcement(ann_id: int, title: str = None, content: str = None) -> bool:
     """更新公告标题和/或内容（SQLite + Chroma 双更新）"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM announcements WHERE id=?", (ann_id,))
@@ -686,7 +702,7 @@ def update_announcement(ann_id: int, title: str = None, content: str = None) -> 
 
 def delete_announcement(ann_id: int) -> bool:
     """删除公告（SQLite + Chroma 双删）"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     cur.execute("SELECT id FROM announcements WHERE id=?", (ann_id,))
     if not cur.fetchone():
@@ -702,7 +718,7 @@ def delete_announcement(ann_id: int) -> bool:
 
 def delete_announcement_by_source(source_file: str) -> bool:
     """按 ADVER 源文件名删除公告（SQLite + Chroma 双删）"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     cur.execute("SELECT id FROM announcements WHERE source_file=?", (source_file,))
     row = cur.fetchone()
@@ -719,7 +735,7 @@ def delete_announcement_by_source(source_file: str) -> bool:
 
 def delete_all_announcements():
     """清空全部公告（SQLite + Chroma），用于重建索引"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     cur.execute("DELETE FROM announcements")
     conn.commit()
@@ -777,7 +793,7 @@ def parse_uploaded_file(filepath: str) -> tuple:
 
 def get_all_payments() -> list[dict]:
     """查询全部物业费记录"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM payments ORDER BY id")
@@ -788,7 +804,7 @@ def get_all_payments() -> list[dict]:
 
 def get_payment_by_room(room_number: str) -> list[dict]:
     """按门牌号查询物业费"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM payments WHERE room_number=? ORDER BY id",
@@ -800,7 +816,7 @@ def get_payment_by_room(room_number: str) -> list[dict]:
 
 def get_payments_by_status(status: str) -> list[dict]:
     """按缴费状态筛选物业费记录"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM payments WHERE status=? ORDER BY id", (status,))
@@ -811,7 +827,7 @@ def get_payments_by_status(status: str) -> list[dict]:
 
 def get_db_stats() -> dict:
     """获取数据库统计信息"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -847,10 +863,11 @@ def get_db_stats() -> dict:
     }
 
 
+@retry_db(max_retries=3)
 def add_payment(room_number: str, amount: float, due_date: str,
                 status: str = "unpaid", notes: str = "") -> int:
     """新增物业费记录，返回新记录的 id"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO payments (room_number, amount, due_date, status, notes) "
@@ -864,7 +881,7 @@ def add_payment(room_number: str, amount: float, due_date: str,
 
 def update_payment_status(pay_id: int, status: str, paid_date: str = None) -> bool:
     """更新缴费状态"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     pd = paid_date or datetime.now().strftime("%Y-%m-%d")
     cur.execute("UPDATE payments SET status=?, paid_date=? WHERE id=?",
@@ -877,7 +894,7 @@ def update_payment_status(pay_id: int, status: str, paid_date: str = None) -> bo
 
 def delete_payment(pay_id: int) -> bool:
     """删除物业费记录"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     cur.execute("DELETE FROM payments WHERE id=?", (pay_id,))
     deleted = cur.rowcount > 0
@@ -892,7 +909,7 @@ def delete_payment(pay_id: int) -> bool:
 
 def add_notification(room_number: str, title: str, content: str, ntype: str = "info") -> int:
     """新增通知，room_number 为空表示全员通知"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur.execute(
@@ -907,7 +924,7 @@ def add_notification(room_number: str, title: str, content: str, ntype: str = "i
 
 def get_notifications(room_number: str = "", include_public: bool = True) -> list[dict]:
     """获取通知列表。include_public=False 时仅显示该住户专属通知（隐私保护）"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     if include_public:
@@ -925,7 +942,7 @@ def get_notifications(room_number: str = "", include_public: bool = True) -> lis
 
 def get_unread_count(room_number: str, include_public: bool = True) -> int:
     """获取未读通知数量"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     if include_public:
         cur.execute(
@@ -942,7 +959,7 @@ def get_unread_count(room_number: str, include_public: bool = True) -> int:
 
 def mark_notification_read(nid: int) -> bool:
     """标记通知为已读"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     cur.execute("UPDATE notifications SET is_read=1 WHERE id=?", (nid,))
     updated = cur.rowcount > 0
@@ -955,9 +972,10 @@ def mark_notification_read(nid: int) -> bool:
 # 报修工单
 # ============================================================
 
+@retry_db(max_retries=3)
 def add_repair(room_number: str, title: str, description: str) -> int:
     """住户提交报修，返回工单ID"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur.execute(
@@ -972,7 +990,7 @@ def add_repair(room_number: str, title: str, description: str) -> int:
 
 def get_all_repairs() -> list[dict]:
     """管理员查看全部工单"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM repairs ORDER BY id DESC")
@@ -983,7 +1001,7 @@ def get_all_repairs() -> list[dict]:
 
 def get_repairs_by_room(room_number: str) -> list[dict]:
     """住户查看自己的工单"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM repairs WHERE room_number=? ORDER BY id DESC",
@@ -995,7 +1013,7 @@ def get_repairs_by_room(room_number: str) -> list[dict]:
 
 def update_repair(repair_id: int, status: str = None, admin_note: str = None) -> bool:
     """管理员更新工单状态/备注"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM repairs WHERE id=?", (repair_id,))
@@ -1021,7 +1039,7 @@ def update_repair(repair_id: int, status: str = None, admin_note: str = None) ->
 def add_payment_log(action: str, admin_name: str, room_count: int, amount: float,
                     period_text: str, payment_ids: list[int]) -> int:
     """记录物业费发布/撤销操作，返回日志ID"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     cur = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur.execute(
@@ -1037,7 +1055,7 @@ def add_payment_log(action: str, admin_name: str, room_count: int, amount: float
 
 def get_payment_logs(limit: int = 20) -> list[dict]:
     """获取最近的物业费操作日志"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM payment_logs ORDER BY id DESC LIMIT ?", (limit,))
@@ -1048,7 +1066,7 @@ def get_payment_logs(limit: int = 20) -> list[dict]:
 
 def undo_payment_log(log_id: int) -> dict:
     """撤销指定日志对应的物业费发布操作，返回撤销信息"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 

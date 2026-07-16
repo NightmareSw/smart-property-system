@@ -23,6 +23,7 @@ import uuid
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import asyncio
 import shutil
 from pathlib import Path
 from urllib.parse import unquote
@@ -35,8 +36,25 @@ from langchain.agents import AgentExecutor
 
 import src.property_db as db
 from src.agents import build_admin_agent, build_resident_agent, set_resident_context
+from src.resilience import format_error, CircuitBreakerOpenError
 
-app = FastAPI(title="物业多Agent系统", version="1.0.0")
+app = FastAPI(title="物业多Agent系统", version="2.0.0")
+
+
+# ============================================================
+# 全局异常中间件
+# ============================================================
+
+@app.middleware("http")
+async def error_middleware(request, call_next):
+    """捕获所有未处理异常，返回统一格式"""
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        err = format_error(exc)
+        from fastapi.responses import JSONResponse
+        status = 503 if err["error"] == "service_unavailable" else 500
+        return JSONResponse(status_code=status, content={"detail": err["message"]})
 
 app.add_middleware(
     CORSMiddleware,
@@ -178,7 +196,7 @@ async def chat_admin(req: ChatRequest):
 
     start = time.time()
     try:
-        result = executor.invoke({"input": req.input})
+        result = await asyncio.to_thread(executor.invoke, {"input": req.input})
         output = result.get("output", "（无响应）")
     except Exception as e:
         print(f"[admin_chat] 错误: {e}")
@@ -199,7 +217,6 @@ async def chat_resident(req: ChatRequest):
         raise HTTPException(401, detail="未登录或会话已过期")
 
     ctx = _resident_contexts.get(req.token, {})
-    # 确保工具中的上下文是最新的（多 token 场景下需要刷新）
     set_resident_context(
         room_number=ctx.get("room_number", ""),
         owner_name=ctx.get("owner_name", ""),
@@ -208,7 +225,7 @@ async def chat_resident(req: ChatRequest):
 
     start = time.time()
     try:
-        result = executor.invoke({"input": req.input})
+        result = await asyncio.to_thread(executor.invoke, {"input": req.input})
         output = result.get("output", "（无响应）")
     except Exception as e:
         print(f"[resident_chat] 错误: {e}")

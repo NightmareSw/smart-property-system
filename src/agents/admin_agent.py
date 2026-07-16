@@ -14,6 +14,7 @@ from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 
 from src.DeepSeek_v4_pro import deepseek_v4_pro
+from src.resilience import llm_breaker, retry_db
 import src.property_db as db
 
 _llm = deepseek_v4_pro
@@ -165,7 +166,15 @@ def admin_generate_announcement(topic: str, details: str) -> str:
 
     try:
         from langchain_core.messages import HumanMessage
-        response = _llm.invoke([HumanMessage(content=prompt)])
+
+        def _call_llm():
+            return _llm.invoke([HumanMessage(content=prompt)])
+
+        def _fallback():
+            from langchain_core.messages import AIMessage
+            return AIMessage(content=f"【{topic}】\n\n{details}\n\nxxx物业管理中心")
+
+        response = llm_breaker.call(_call_llm, fallback=_fallback)
         announcement = response.content.strip()
         return (
             f"=== 公告草稿 ===\n\n{announcement}\n\n"
