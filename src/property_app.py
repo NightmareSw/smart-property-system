@@ -222,6 +222,294 @@ async def chat_resident(req: ChatRequest):
 
 
 # ============================================================
+# 住户注册
+# ============================================================
+
+class RegisterRequest(BaseModel):
+    room_number: str
+    owner_name: str
+    phone: str
+    password: str
+
+
+@app.post("/api/register")
+async def register_resident(req: RegisterRequest):
+    """住户自助注册"""
+    ok = db.add_owner(req.room_number, req.password, req.owner_name, req.phone)
+    if not ok:
+        raise HTTPException(409, detail=f"门牌号 {req.room_number} 已存在，请直接登录或联系管理员")
+    db.add_notification("", "新住户注册", f"{req.room_number}室 {req.owner_name} 已注册", "info")
+    return {"success": True, "message": "注册成功"}
+
+
+# ============================================================
+# 住户自助接口
+# ============================================================
+
+@app.get("/api/my-payments")
+async def my_payments(token: str):
+    """查询当前住户的物业费记录（直接返回JSON，不走Agent）"""
+    ctx = _resident_contexts.get(token)
+    if not ctx:
+        raise HTTPException(401, detail="未登录")
+    rows = db.get_payment_by_room(ctx["room_number"])
+    return {"payments": rows, "room_number": ctx["room_number"]}
+
+
+@app.post("/api/pay/{pay_id}")
+async def pay_bill(pay_id: int, token: str):
+    """模拟在线支付：标记指定物业费记录为已缴纳"""
+    ctx = _resident_contexts.get(token)
+    if not ctx:
+        raise HTTPException(401, detail="未登录")
+
+    # 验证该记录属于当前住户
+    rows = db.get_payment_by_room(ctx["room_number"])
+    target = None
+    for r in rows:
+        if r["id"] == pay_id:
+            target = r
+            break
+    if not target:
+        raise HTTPException(404, detail="记录不存在")
+    if target["status"] == "paid":
+        raise HTTPException(400, detail="该记录已缴纳")
+
+    ok = db.update_payment_status(pay_id, "paid")
+    if not ok:
+        raise HTTPException(500, detail="支付失败")
+    return {"success": True, "message": f"支付成功，金额 {target['amount']} 元"}
+
+
+# ============================================================
+# 消息通知接口
+# ============================================================
+
+@app.get("/api/notifications")
+async def list_notifications(token: str):
+    """获取当前用户的通知列表（住户仅看个人，管理员看全部）"""
+    if token in _resident_contexts:
+        ctx = _resident_contexts[token]
+        notifications = db.get_notifications(ctx["room_number"], include_public=False)
+        unread = db.get_unread_count(ctx["room_number"], include_public=False)
+    elif token in _admin_sessions:
+        notifications = db.get_notifications("", include_public=True)
+        unread = db.get_unread_count("", include_public=True)
+    else:
+        raise HTTPException(401, detail="未登录")
+    return {"notifications": notifications, "unread": unread}
+
+
+@app.get("/api/notifications/unread-count")
+async def unread_count(token: str):
+    """获取未读通知数量"""
+    if token in _resident_contexts:
+        room = _resident_contexts[token]["room_number"]
+        count = db.get_unread_count(room, include_public=False)
+    elif token in _admin_sessions:
+        count = db.get_unread_count("", include_public=True)
+    else:
+        raise HTTPException(401, detail="未登录")
+    return {"unread": count}
+
+
+@app.post("/api/notifications/{nid}/read")
+async def mark_read(nid: int, token: str):
+    """标记通知为已读"""
+    if token not in _resident_contexts and token not in _admin_sessions:
+        raise HTTPException(401, detail="未登录")
+    db.mark_notification_read(nid)
+    return {"success": True}
+
+
+# ============================================================
+# 报修工单接口
+# ============================================================
+
+class RepairRequest(BaseModel):
+    title: str
+    description: str
+
+
+class RepairUpdateRequest(BaseModel):
+    status: str = None
+    admin_note: str = None
+
+
+@app.get("/api/repairs/my")
+async def my_repairs(token: str):
+    """住户查看自己的报修工单"""
+    ctx = _resident_contexts.get(token)
+    if not ctx:
+        raise HTTPException(401, detail="未登录")
+    repairs = db.get_repairs_by_room(ctx["room_number"])
+    return {"repairs": repairs}
+
+
+@app.post("/api/repairs")
+async def submit_repair(req: RepairRequest, token: str):
+    """住户提交报修"""
+    ctx = _resident_contexts.get(token)
+    if not ctx:
+        raise HTTPException(401, detail="未登录")
+    rid = db.add_repair(ctx["room_number"], req.title, req.description)
+    db.add_notification(ctx["room_number"], "报修已提交", f"您的报修「{req.title}」已提交，请等待处理", "repair")
+    db.add_notification("", "新报修工单", f"{ctx['room_number']}室提交了报修：{req.title}", "repair")
+    return {"success": True, "id": rid}
+
+
+@app.get("/api/repairs")
+async def list_repairs(token: str):
+    """管理员查看全部工单"""
+    _verify_admin(token)
+    return {"repairs": db.get_all_repairs()}
+
+
+@app.put("/api/repairs/{repair_id}")
+async def update_repair_api(repair_id: int, req: RepairUpdateRequest, token: str):
+    """管理员更新工单状态"""
+    _verify_admin(token)
+    ok = db.update_repair(repair_id, req.status, req.admin_note)
+    if not ok:
+        raise HTTPException(404, detail="工单不存在")
+
+    # 发送通知给对应住户
+    repairs = db.get_all_repairs()
+    for r in repairs:
+        if r["id"] == repair_id:
+            status_label = {"pending": "待处理", "processing": "处理中",
+                           "completed": "已完成", "cancelled": "已取消"}
+            db.add_notification(r["room_number"], "工单状态更新",
+                f"您的报修「{r['title']}」状态已更新为：{status_label.get(req.status, req.status or '')}",
+                "repair")
+            break
+    return {"success": True}
+
+
+# ============================================================
+# 物业费管理接口（管理员专用）
+# ============================================================
+
+class PublishPaymentRequest(BaseModel):
+    room_number: str = "all"   # "all" 或具体门牌号
+    amount: float
+    year: int
+    period: str               # "1月"..."12月" / "第一季度"..."第四季度" / "上半年"/"下半年"/"全年"
+    notes: str = ""
+
+
+def _calc_due_date(year: int, period: str) -> str:
+    """根据年份和周期计算截止日期"""
+    period_map = {
+        "1月": "01-31", "2月": "02-28", "3月": "03-31", "4月": "04-30",
+        "5月": "05-31", "6月": "06-30", "7月": "07-31", "8月": "08-31",
+        "9月": "09-30", "10月": "10-31", "11月": "11-30", "12月": "12-31",
+        "第一季度": "03-31", "第二季度": "06-30",
+        "第三季度": "09-30", "第四季度": "12-31",
+        "上半年": "06-30", "下半年": "12-31", "全年": "12-31",
+    }
+    md = period_map.get(period, "12-31")
+    return f"{year}-{md}"
+
+
+@app.post("/api/payments/publish")
+async def publish_payment(req: PublishPaymentRequest, token: str):
+    """管理员发布物业费（单户或批量全部业主）"""
+    _verify_admin(token)
+
+    due_date = _calc_due_date(req.year, req.period)
+    note_text = f"{req.year}年{req.period} | {req.notes}" if req.notes else f"{req.year}年{req.period}"
+
+    if req.room_number == "all":
+        owners = db.get_all_owners()
+        rooms = [o["room_number"] for o in owners]
+    else:
+        rooms = [req.room_number]
+
+    created = []
+    for room in rooms:
+        pid = db.add_payment(room, req.amount, due_date, notes=note_text)
+        created.append(pid)
+        db.add_notification(room, "物业费待缴",
+            f"{req.year}年{req.period}物业费 ¥{req.amount} 已发布，请及时缴纳", "payment")
+
+    # 记录操作日志
+    log_id = db.add_payment_log("publish", "管理员", len(created), req.amount,
+                                note_text, created)
+
+    return {
+        "success": True,
+        "count": len(created),
+        "rooms": rooms,
+        "due_date": due_date,
+        "log_id": log_id,
+    }
+
+
+@app.get("/api/payments/logs")
+async def payment_logs(token: str):
+    """获取最近的物业费操作日志"""
+    _verify_admin(token)
+    return {"logs": db.get_payment_logs()}
+
+
+class SetPaymentStatusRequest(BaseModel):
+    pay_id: int
+    status: str
+
+
+@app.post("/api/payments/set-status")
+async def set_payment_status(req: SetPaymentStatusRequest, token: str):
+    """管理员手动设置物业费缴纳状态"""
+    _verify_admin(token)
+    valid = {"paid", "unpaid"}
+    if req.status not in valid:
+        raise HTTPException(400, detail=f"无效状态，可选: {valid}")
+    ok = db.update_payment_status(req.pay_id, req.status,
+        "" if req.status == "unpaid" else None)
+    if not ok:
+        raise HTTPException(404, detail="记录不存在")
+    return {"success": True}
+
+
+@app.post("/api/payments/undo/{log_id}")
+async def undo_payment(log_id: int, token: str):
+    """撤销指定日志对应的物业费发布操作"""
+    _verify_admin(token)
+    result = db.undo_payment_log(log_id)
+    if result is None:
+        raise HTTPException(404, detail="日志不存在")
+    if "error" in result:
+        raise HTTPException(400, detail=result["error"])
+    return {"success": True, **result}
+
+
+@app.get("/api/payments/grouped")
+async def payments_grouped(token: str):
+    """按门牌号分组返回物业费数据，用于管理员查询面板"""
+    _verify_admin(token)
+    all_payments = db.get_all_payments()
+    owners = {o["room_number"]: o["owner_name"] for o in db.get_all_owners()}
+
+    grouped = {}
+    for p in all_payments:
+        room = p["room_number"]
+        if room not in grouped:
+            grouped[room] = {
+                "room_number": room,
+                "owner_name": owners.get(room, ""),
+                "records": [],
+                "total_unpaid": 0,
+            }
+        grouped[room]["records"].append(p)
+        if p["status"] != "paid":
+            grouped[room]["total_unpaid"] += p["amount"]
+
+    result = sorted(grouped.values(), key=lambda x: x["room_number"])
+    return {"groups": result}
+
+
+# ============================================================
 # 公开接口
 # ============================================================
 
@@ -316,6 +604,7 @@ async def upload_adver_file(token: str, file: UploadFile = File(...)):
         raise HTTPException(400, detail=f"文件解析失败: {str(e)}")
 
     new_id = db.add_announcement(title, content, source_file=file.filename)
+    db.add_notification("", "新公告发布", f"物业发布了新公告：{title}", "info")
     return {"success": True, "ann_id": new_id, "title": title, "filename": file.filename}
 
 

@@ -28,6 +28,9 @@ body { font-family: 'Microsoft YaHei', Arial, sans-serif; background: linear-gra
 .form button { width: 100%; padding: 13px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #fff; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; letter-spacing: 1px; }
 .form button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79,172,254,0.4); }
 .error { color: #e74c3c; font-size: 13px; margin-bottom: 12px; display: none; }
+.login-links { text-align: center; padding: 8px 0 16px; font-size: 12px; color: #bbb; }
+.login-links a { color: #999; text-decoration: none; margin: 0 8px; }
+.login-links a:hover { color: #4facfe; }
 /* 聊天界面（登录后） */
 .chat-view { display: none; flex-direction: column; height: 100vh; }
 .chat-view.active { display: flex; }
@@ -102,6 +105,21 @@ body { font-family: 'Microsoft YaHei', Arial, sans-serif; background: linear-gra
 .ann-detail h3 { font-size: 18px; margin-bottom: 8px; color: #333; }
 .ann-detail .ann-meta { font-size: 12px; color: #999; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #eee; }
 .ann-detail .ann-body { font-size: 14px; line-height: 1.8; color: #444; white-space: pre-wrap; }
+
+/* 通知铃铛 */
+.notify-bell { position: relative; cursor: pointer; font-size: 20px; margin-right: 12px; user-select: none; }
+.notify-bell .badge { position: absolute; top: -6px; right: -8px; background: #e74c3c; color: #fff; font-size: 10px; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+.notify-bell .badge:empty { display: none; }
+.notify-dropdown { display: none; position: absolute; top: 48px; right: 24px; width: 340px; max-height: 400px; overflow-y: auto; background: #fff; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); z-index: 100; }
+.notify-dropdown.active { display: block; }
+.notify-dropdown .notify-header { padding: 12px 16px; font-weight: 600; font-size: 14px; border-bottom: 1px solid #eee; color: #333; }
+.notify-item { padding: 12px 16px; border-bottom: 1px solid #f5f5f5; cursor: pointer; transition: 0.1s; }
+.notify-item:hover { background: #f7f9ff; }
+.notify-item.unread { background: #f0f4ff; }
+.notify-item .ntitle { font-size: 13px; font-weight: 600; color: #333; margin-bottom: 2px; }
+.notify-item .ncontent { font-size: 12px; color: #888; }
+.notify-item .ntime { font-size: 11px; color: #bbb; margin-top: 4px; }
+.notify-empty { padding: 24px; text-align: center; color: #999; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -113,21 +131,8 @@ body { font-family: 'Microsoft YaHei', Arial, sans-serif; background: linear-gra
             <h1>智慧物业管理系统</h1>
             <p>多Agent协作服务平台</p>
         </div>
-        <div class="tabs">
-            <button class="tab active" onclick="switchTab('admin')">管理员登录</button>
-            <button class="tab" onclick="switchTab('resident')">住户登录</button>
-        </div>
-        <!-- 管理员表单 -->
-        <div class="form active" id="form-admin">
-            <div class="error" id="error-admin"></div>
-            <label>管理员账号</label>
-            <input type="text" id="admin-user" placeholder="请输入管理员账号" value="admin">
-            <label>管理员密码</label>
-            <input type="password" id="admin-pass" placeholder="请输入密码" value="admin123">
-            <button onclick="login('admin')">登录管理后台</button>
-        </div>
-        <!-- 住户表单 -->
-        <div class="form" id="form-resident">
+        <!-- 住户登录（默认主表单） -->
+        <div class="form active" id="form-resident">
             <div class="error" id="error-resident"></div>
             <label>门牌号</label>
             <input type="text" id="resident-room" placeholder="请输入门牌号（如 101）" value="101">
@@ -135,17 +140,49 @@ body { font-family: 'Microsoft YaHei', Arial, sans-serif; background: linear-gra
             <input type="password" id="resident-pass" placeholder="请输入密码" value="101001">
             <button onclick="login('resident')">进入客服中心</button>
         </div>
+        <!-- 管理员登录 -->
+        <div class="form" id="form-admin">
+            <div class="error" id="error-admin"></div>
+            <label>管理员账号</label>
+            <input type="text" id="admin-user" placeholder="请输入管理员账号" value="admin">
+            <label>管理员密码</label>
+            <input type="password" id="admin-pass" placeholder="请输入密码" value="admin123">
+            <button onclick="login('admin')">登录管理后台</button>
+        </div>
+        <!-- 注册表单 -->
+        <div class="form" id="form-register">
+            <div class="error" id="error-register"></div>
+            <label>门牌号</label>
+            <input type="text" id="reg-room" placeholder="请输入门牌号（如 103）">
+            <label>姓名</label>
+            <input type="text" id="reg-name" placeholder="请输入您的姓名">
+            <label>电话</label>
+            <input type="text" id="reg-phone" placeholder="请输入手机号">
+            <label>密码</label>
+            <input type="password" id="reg-password" placeholder="请设置登录密码">
+            <button onclick="register()">注册</button>
+        </div>
+        <div class="login-links" id="login-links">
+            <a href="javascript:void(0)" onclick="switchForm('admin')">管理员登录</a>
+            <span>|</span>
+            <a href="javascript:void(0)" onclick="switchForm('register')">没有账号？注册</a>
+        </div>
     </div>
 
     <!-- ===== 住户界面 ===== -->
     <div class="dashboard" id="resident-view">
         <div class="chat-header">
             <span class="user-info" id="resident-user-info"></span>
-            <button class="logout-btn" onclick="logout()">退出登录</button>
+            <div style="display:flex;align-items:center;">
+                <span class="notify-bell" onclick="toggleNotifyDropdown(event)" title="消息通知">🔔<span class="badge" id="resident-badge"></span></span>
+                <button class="logout-btn" onclick="logout()">退出登录</button>
+            </div>
         </div>
         <div class="dash-tabs">
             <button class="dash-tab active" onclick="switchResidentTab('chat')">AI客服</button>
             <button class="dash-tab" onclick="switchResidentTab('announcements')">公告查看</button>
+            <button class="dash-tab" onclick="switchResidentTab('payment')">物业缴费</button>
+            <button class="dash-tab" onclick="switchResidentTab('repair')">报修</button>
         </div>
 
         <!-- Tab 1: AI客服 -->
@@ -165,6 +202,23 @@ body { font-family: 'Microsoft YaHei', Arial, sans-serif; background: linear-gra
                 <div id="ann-detail-content"></div>
             </div>
         </div>
+
+        <!-- Tab 3: 物业缴费 -->
+        <div class="dash-panel" id="rpanel-payment">
+            <div class="toast" id="pay-toast"></div>
+            <div id="payment-list"></div>
+        </div>
+
+        <!-- Tab 4: 报修 -->
+        <div class="dash-panel" id="rpanel-repair">
+            <div class="toast" id="rrepair-toast"></div>
+            <div class="inline-form active" id="repair-form">
+                <input type="text" id="repair-title" placeholder="报修标题（如水管漏水）" style="width:100%;margin-bottom:8px;">
+                <textarea id="repair-desc" placeholder="详细描述（位置、现象等）" style="width:100%;height:80px;border:1px solid #ddd;border-radius:6px;padding:8px;font-size:13px;margin-bottom:8px;resize:vertical;"></textarea>
+                <button class="btn-success" onclick="submitRepair()">提交报修</button>
+            </div>
+            <div id="my-repair-list" style="margin-top:14px;"></div>
+        </div>
     </div>
 
     <!-- ===== 保留旧 chat-view ID 兼容 ===== -->
@@ -174,12 +228,17 @@ body { font-family: 'Microsoft YaHei', Arial, sans-serif; background: linear-gra
     <div class="dashboard" id="dashboard">
         <div class="chat-header">
             <span class="user-info" id="dash-user-info"></span>
-            <button class="logout-btn" onclick="logout()">退出登录</button>
+            <div style="display:flex;align-items:center;">
+                <span class="notify-bell" onclick="toggleNotifyDropdown(event)" title="消息通知">🔔<span class="badge" id="admin-badge"></span></span>
+                <button class="logout-btn" onclick="logout()">退出登录</button>
+            </div>
         </div>
         <div class="dash-tabs">
             <button class="dash-tab active" onclick="switchDashTab('chat')">AI助手</button>
             <button class="dash-tab" onclick="switchDashTab('files')">公告文件</button>
             <button class="dash-tab" onclick="switchDashTab('owners')">业主管理</button>
+            <button class="dash-tab" onclick="switchDashTab('repairs')">工单管理</button>
+            <button class="dash-tab" onclick="switchDashTab('payquery')">物业费查询</button>
         </div>
 
         <!-- Tab 1: AI助手 -->
@@ -222,6 +281,46 @@ body { font-family: 'Microsoft YaHei', Arial, sans-serif; background: linear-gra
                 <tbody></tbody>
             </table>
         </div>
+        <!-- Tab 4: 工单管理 -->
+        <div class="dash-panel" id="panel-repairs">
+            <div class="toast" id="repair-toast"></div>
+            <table class="data-table" id="repair-table">
+                <thead><tr><th>ID</th><th>门牌号</th><th>标题</th><th>描述</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <!-- Tab 5: 物业费查询 -->
+        <div class="dash-panel" id="panel-payquery">
+            <div class="toast" id="publish-toast"></div>
+            <div class="inline-form active" style="margin-bottom:16px;">
+                <div style="font-weight:600;margin-bottom:10px;color:#333;">发布物业费</div>
+                <select id="pub-room" style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-right:8px;margin-bottom:6px;">
+                    <option value="all">全部业主</option>
+                </select>
+                <input type="number" id="pub-amount" placeholder="金额(元)" style="width:100px;padding:8px;border:1px solid #ddd;border-radius:6px;margin-right:8px;">
+                <select id="pub-year" style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-right:8px;">
+                    <option value="2026">2026年</option><option value="2027">2027年</option>
+                </select>
+                <select id="pub-period" style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-right:8px;">
+                    <option value="1月">1月</option><option value="2月">2月</option><option value="3月">3月</option>
+                    <option value="第一季度">第一季度</option><option value="第二季度">第二季度</option>
+                    <option value="第三季度">第三季度</option><option value="第四季度">第四季度</option>
+                    <option value="上半年">上半年</option><option value="下半年">下半年</option>
+                    <option value="全年">全年</option>
+                </select>
+                <input type="text" id="pub-notes" placeholder="备注(可选)" style="width:150px;padding:8px;border:1px solid #ddd;border-radius:6px;margin-right:8px;">
+                <button class="btn-success" onclick="publishPayment()">发布</button>
+            </div>
+            <div id="payquery-list"></div>
+            <div style="margin-top:20px;"><div style="font-weight:600;margin-bottom:8px;color:#555;">最近发布记录</div><div id="pay-log-list"></div></div>
+        </div>
+        </div>
+    </div>
+
+    <!-- 通知下拉面板（全局共享） -->
+    <div class="notify-dropdown" id="notify-dropdown">
+        <div class="notify-header">消息通知</div>
+        <div id="notify-list"></div>
     </div>
 </div>
 
@@ -231,11 +330,54 @@ let token = '';
 let chatApiUrl = '';
 
 // ---- 切换登录标签 ----
-function switchTab(role) {
-    currentRole = role;
-    document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i===0 && role==='admin') || (i===1 && role==='resident')));
-    document.querySelectorAll('.form').forEach(f => f.classList.remove('active'));
+function switchForm(role) {
+    document.querySelectorAll('.form').forEach(function(f) { f.classList.remove('active'); });
     document.getElementById('form-' + role).classList.add('active');
+
+    var links = document.getElementById('login-links');
+    if (role === 'resident') {
+        links.innerHTML = '<a href="javascript:void(0)" onclick="switchForm(\'admin\')">管理员登录</a><span>|</span><a href="javascript:void(0)" onclick="switchForm(\'register\')">没有账号？注册</a>';
+    } else if (role === 'admin') {
+        links.innerHTML = '<a href="javascript:void(0)" onclick="switchForm(\'resident\')">返回住户登录</a><span>|</span><a href="javascript:void(0)" onclick="switchForm(\'register\')">没有账号？注册</a>';
+    } else {
+        links.innerHTML = '<a href="javascript:void(0)" onclick="switchForm(\'resident\')">返回住户登录</a><span>|</span><a href="javascript:void(0)" onclick="switchForm(\'admin\')">管理员登录</a>';
+    }
+}
+
+// ---- 注册 ----
+async function register() {
+    var errEl = document.getElementById('error-register');
+    errEl.style.display = 'none';
+
+    var room = document.getElementById('reg-room').value.trim();
+    var name = document.getElementById('reg-name').value.trim();
+    var phone = document.getElementById('reg-phone').value.trim();
+    var pwd = document.getElementById('reg-password').value.trim();
+
+    if (!room || !name || !phone || !pwd) {
+        errEl.textContent = '请填写所有字段';
+        errEl.style.display = 'block';
+        return;
+    }
+
+    try {
+        var resp = await fetch('/api/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ room_number: room, owner_name: name, phone: phone, password: pwd })
+        });
+        var data = await resp.json();
+        if (!resp.ok) { errEl.textContent = data.detail || '注册失败'; errEl.style.display = 'block'; return; }
+
+        // 注册成功，切换到登录表单
+        document.getElementById('resident-room').value = room;
+        document.getElementById('resident-pass').value = pwd;
+        alert('注册成功！请点击登录。');
+        switchForm('resident');
+    } catch (e) {
+        errEl.textContent = '网络错误，请检查服务是否启动';
+        errEl.style.display = 'block';
+    }
 }
 
 // ---- 登录 ----
@@ -352,17 +494,6 @@ function addHint(text) {
 // 住户标签页
 // ============================================================
 
-function switchResidentTab(name) {
-    document.querySelectorAll('#resident-view .dash-tab').forEach(function(t, i) {
-        var names = ['chat', 'announcements'];
-        t.classList.toggle('active', names[i] === name);
-    });
-    document.querySelectorAll('#resident-view .dash-panel').forEach(function(p) { p.classList.remove('active'); });
-    var panel = document.getElementById('rpanel-' + name);
-    if (panel) panel.classList.add('active');
-    if (name === 'announcements') loadAnnouncementList();
-}
-
 // --- 住户聊天 ---
 async function sendResidentMsg() {
     var input = document.getElementById('rchat-input');
@@ -454,19 +585,408 @@ function closeAnnDetail() {
     document.getElementById('ann-list').style.display = 'block';
 }
 
+// --- 物业缴费 ---
+async function loadMyPayments() {
+    try {
+        var resp = await fetch('/api/my-payments?token=' + encodeURIComponent(token));
+        var data = await resp.json();
+        var container = document.getElementById('payment-list');
+        if (!resp.ok) { container.innerHTML = '<div style="color:#c00;">加载失败</div>'; return; }
+        if (!data.payments || data.payments.length === 0) {
+            container.innerHTML = '<div style="text-align:center;color:#999;padding:40px;">暂无物业费记录</div>';
+            return;
+        }
+        var statusLabel = { paid: '已缴纳', unpaid: '未缴纳', overdue: '已逾期' };
+        var html = '<div style="font-size:14px;color:#666;margin-bottom:12px;">门牌号：' + escHtml(data.room_number) + '室</div>';
+        for (var i = 0; i < data.payments.length; i++) {
+            var p = data.payments[i];
+            var status = p.status;
+            var label = statusLabel[status] || status;
+            var statusColor = status === 'paid' ? '#27ae60' : (status === 'overdue' ? '#e74c3c' : '#f39c12');
+            html += '<div class="ann-item" style="cursor:default;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                '<div>' +
+                '<div class="ann-title">' + p.amount + ' 元</div>' +
+                '<div class="ann-meta">截止: ' + p.due_date + ' | 状态: <span style="color:' + statusColor + ';font-weight:600;">' + label + '</span>' +
+                (p.paid_date ? ' | 缴纳日期: ' + p.paid_date : '') + '</div>' +
+                '</div>';
+            if (status !== 'paid') {
+                html += '<button class="btn-sm btn-success" onclick="payBill(' + p.id + ',' + p.amount + ')">立即支付</button>';
+            }
+            html += '</div></div>';
+        }
+        container.innerHTML = html;
+    } catch (e) {
+        document.getElementById('payment-list').innerHTML = '<div style="color:#c00;">加载失败: ' + e.message + '</div>';
+    }
+}
+
+async function payBill(payId, amount) {
+    if (!confirm('确认支付 ¥' + amount + ' 元？\n\n此为模拟支付，点击确认后将自动标记为已缴纳。')) return;
+    try {
+        var resp = await fetch('/api/pay/' + payId + '?token=' + encodeURIComponent(token), { method: 'POST' });
+        var data = await resp.json();
+        if (!resp.ok) { showPayToast(data.detail || '支付失败', 'error'); return; }
+        showPayToast('支付成功！', 'success');
+        loadMyPayments();
+    } catch (e) {
+        showPayToast('支付失败: ' + e.message, 'error');
+    }
+}
+
+function showPayToast(msg, type) {
+    var el = document.getElementById('pay-toast');
+    el.textContent = msg;
+    el.className = 'toast ' + type;
+    setTimeout(function() { el.className = 'toast'; }, 4000);
+}
+
+// --- 报修工单（住户）---
+async function submitRepair() {
+    var title = document.getElementById('repair-title').value.trim();
+    var desc = document.getElementById('repair-desc').value.trim();
+    if (!title || !desc) { showRRepairToast('请填写标题和描述', 'error'); return; }
+    try {
+        var resp = await fetch('/api/repairs?token=' + encodeURIComponent(token), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: title, description: desc })
+        });
+        var data = await resp.json();
+        if (!resp.ok) { showRRepairToast(data.detail || '提交失败', 'error'); return; }
+        showRRepairToast('报修已提交，工单ID=' + data.id, 'success');
+        document.getElementById('repair-title').value = '';
+        document.getElementById('repair-desc').value = '';
+        loadMyRepairs();
+    } catch (e) { showRRepairToast('提交失败: ' + e.message, 'error'); }
+}
+
+async function loadMyRepairs() {
+    try {
+        var resp = await fetch('/api/repairs/my?token=' + encodeURIComponent(token));
+        var data = await resp.json();
+        var container = document.getElementById('my-repair-list');
+        if (!data.repairs || data.repairs.length === 0) {
+            container.innerHTML = '<div style="text-align:center;color:#999;padding:20px;">暂无报修记录</div>';
+            return;
+        }
+        var statusLabel = { pending: '待处理', processing: '处理中', completed: '已完成', cancelled: '已取消' };
+        var html = '<h4 style="margin-bottom:10px;">我的报修记录</h4>';
+        for (var i = 0; i < data.repairs.length; i++) {
+            var r = data.repairs[i];
+            var color = r.status === 'completed' ? '#27ae60' : (r.status === 'processing' ? '#4facfe' : '#f39c12');
+            html += '<div class="ann-item" style="cursor:default;">' +
+                '<div class="ann-title">' + escHtml(r.title) + ' <span style="color:' + color + ';font-size:12px;">' + (statusLabel[r.status] || r.status) + '</span></div>' +
+                '<div class="ann-meta">提交: ' + r.created_at + '</div>' +
+                '<div style="font-size:13px;color:#555;margin-top:4px;">' + escHtml(r.description) + '</div>' +
+                (r.admin_note ? '<div style="font-size:12px;color:#4facfe;margin-top:4px;">物业回复: ' + escHtml(r.admin_note) + '</div>' : '') +
+                '</div>';
+        }
+        container.innerHTML = html;
+    } catch (e) {}
+}
+
+function showRRepairToast(msg, type) {
+    var el = document.getElementById('rrepair-toast');
+    el.textContent = msg;
+    el.className = 'toast ' + type;
+    setTimeout(function() { el.className = 'toast'; }, 4000);
+}
+
+// --- 报修工单（管理员）---
+async function loadRepairList() {
+    try {
+        var resp = await fetch('/api/repairs?token=' + encodeURIComponent(token));
+        var data = await resp.json();
+        var tbody = document.querySelector('#repair-table tbody');
+        tbody.innerHTML = '';
+        if (!data.repairs || data.repairs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;">暂无工单</td></tr>';
+            return;
+        }
+        var statusLabel = { pending: '待处理', processing: '处理中', completed: '已完成', cancelled: '已取消' };
+        for (var i = 0; i < data.repairs.length; i++) {
+            var r = data.repairs[i];
+            var color = r.status === 'completed' ? '#27ae60' : (r.status === 'processing' ? '#4facfe' : '#f39c12');
+            tbody.innerHTML += '<tr>' +
+                '<td>' + r.id + '</td><td>' + escHtml(r.room_number) + '</td>' +
+                '<td>' + escHtml(r.title) + '</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(r.description) + '</td>' +
+                '<td><span style="color:' + color + ';font-weight:600;">' + (statusLabel[r.status] || r.status) + '</span></td>' +
+                '<td>' + escHtml(r.admin_note || '') + '</td>' +
+                '<td><button class="btn-sm btn-edit" onclick="showRepairEdit(' + r.id + ',\'' + r.status + '\',\'' + escAttr(r.admin_note||'') + '\')">更新</button></td>' +
+                '</tr>';
+        }
+    } catch (e) {}
+}
+
+function showRepairEdit(id, status, note) {
+    var newStatus = prompt('新状态 (pending/processing/completed/cancelled):', status);
+    if (!newStatus) return;
+    var newNote = prompt('备注（可选）:', note);
+    updateRepairStatus(id, newStatus, newNote || '');
+}
+
+async function updateRepairStatus(id, status, note) {
+    try {
+        var resp = await fetch('/api/repairs/' + id + '?token=' + encodeURIComponent(token), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: status, admin_note: note })
+        });
+        var data = await resp.json();
+        if (!resp.ok) { alert(data.detail); return; }
+        loadRepairList();
+    } catch (e) { alert('更新失败: ' + e.message); }
+}
+
+// --- 物业费查询（管理员）---
+var payqueryOpen = {};  // 记录展开状态
+
+async function loadPaymentQuery() {
+    try {
+        var resp = await fetch('/api/payments/grouped?token=' + encodeURIComponent(token));
+        var data = await resp.json();
+        var container = document.getElementById('payquery-list');
+
+        // 填充业主下拉框
+        var sel = document.getElementById('pub-room');
+        sel.innerHTML = '<option value="all">全部业主</option>';
+        if (data.groups) {
+            for (var i = 0; i < data.groups.length; i++) {
+                var g = data.groups[i];
+                sel.innerHTML += '<option value="' + g.room_number + '">' + g.room_number + '室 ' + escHtml(g.owner_name) + '</option>';
+            }
+        }
+        if (!data.groups || data.groups.length === 0) {
+            container.innerHTML = '<div style="text-align:center;color:#999;padding:40px;">暂无物业费数据</div>';
+            return;
+        }
+        var statusLabel = { paid: '已缴纳', unpaid: '未缴纳', overdue: '逾期' };
+        var html = '';
+        for (var i = 0; i < data.groups.length; i++) {
+            var g = data.groups[i];
+            var hasUnpaid = g.total_unpaid > 0;
+            var borderColor = hasUnpaid ? '#f39c12' : '#27ae60';
+            html += '<div class="ann-item" style="border-left:4px solid ' + borderColor + ';cursor:pointer;" onclick="togglePayqueryRoom(\'' + g.room_number + '\')">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                '<div>' +
+                '<div class="ann-title">' + escHtml(g.room_number) + '室 ' + escHtml(g.owner_name) + '</div>' +
+                '<div class="ann-meta">共 ' + g.records.length + ' 条记录' +
+                (hasUnpaid ? ' | <span style="color:#f39c12;font-weight:600;">未缴 ¥' + g.total_unpaid.toFixed(2) + '</span>' : ' | <span style="color:#27ae60;">全部已缴</span>') +
+                '</div>' +
+                '</div>' +
+                '<span style="font-size:20px;color:#999;" id="pq-arrow-' + g.room_number + '">' + (payqueryOpen[g.room_number] ? '▾' : '▸') + '</span>' +
+                '</div>';
+            if (payqueryOpen[g.room_number]) {
+                html += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #eee;">';
+                for (var j = 0; j < g.records.length; j++) {
+                    var p = g.records[j];
+                    var sc = p.status === 'paid' ? '#27ae60' : (p.status === 'overdue' ? '#e74c3c' : '#f39c12');
+                    html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;">' +
+                        '<div><span>[ID:' + p.id + '] ' + p.amount + ' 元 | 截止:' + p.due_date +
+                        (p.notes ? ' | ' + escHtml(p.notes) : '') + '</span></div>' +
+                        '<div style="display:flex;align-items:center;gap:6px;">' +
+                        '<span style="color:' + sc + ';font-weight:600;">' + (statusLabel[p.status] || p.status) + '</span>' +
+                        (p.paid_date ? '<span style="color:#999;">' + p.paid_date + '</span>' : '') +
+                        '<button class="btn-sm btn-edit" style="margin-left:4px;" onclick="event.stopPropagation();togglePayStatus(' + p.id + ',\'' + p.status + '\')">切换</button>' +
+                        '</div></div>';
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        container.innerHTML = html;
+        loadPaymentLogs();
+    } catch (e) {
+        document.getElementById('payquery-list').innerHTML = '<div style="color:#c00;text-align:center;padding:40px;">加载失败</div>';
+    }
+}
+
+function togglePayqueryRoom(room) {
+    payqueryOpen[room] = !payqueryOpen[room];
+    loadPaymentQuery();
+}
+
+async function publishPayment() {
+    var room = document.getElementById('pub-room').value;
+    var amount = parseFloat(document.getElementById('pub-amount').value);
+    var year = parseInt(document.getElementById('pub-year').value);
+    var period = document.getElementById('pub-period').value;
+    var notes = document.getElementById('pub-notes').value.trim();
+
+    if (!amount || amount <= 0) { showPublishToast('请输入有效金额', 'error'); return; }
+
+    var label = room === 'all' ? '全部业主（共' + (document.getElementById('pub-room').options.length - 1) + '户）' : (room + '室');
+    if (!confirm('确认向 ' + label + ' 发布 ' + year + '年' + period + ' 物业费 ¥' + amount + '？')) return;
+
+    try {
+        var resp = await fetch('/api/payments/publish?token=' + encodeURIComponent(token), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ room_number: room, amount: amount, year: year, period: period, notes: notes })
+        });
+        var data = await resp.json();
+        if (!resp.ok) { showPublishToast(data.detail || '发布失败', 'error'); return; }
+        showPublishToast('已发布 ' + data.count + ' 条物业费记录', 'success');
+        loadPaymentQuery();
+    } catch (e) { showPublishToast('发布失败: ' + e.message, 'error'); }
+}
+
+function showPublishToast(msg, type) {
+    var el = document.getElementById('publish-toast');
+    el.textContent = msg;
+    el.className = 'toast ' + type;
+    setTimeout(function() { el.className = 'toast'; }, 4000);
+}
+
+async function togglePayStatus(payId, currentStatus) {
+    var newStatus = currentStatus === 'paid' ? 'unpaid' : 'paid';
+    var label = newStatus === 'paid' ? '已缴纳' : '未缴纳';
+    if (!confirm('将记录 ID=' + payId + ' 设为「' + label + '」？')) return;
+    try {
+        var resp = await fetch('/api/payments/set-status?token=' + encodeURIComponent(token), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pay_id: payId, status: newStatus })
+        });
+        var data = await resp.json();
+        if (!resp.ok) { alert(data.detail); return; }
+        showPublishToast('状态已更新', 'success');
+        loadPaymentQuery();
+    } catch (e) { alert('操作失败: ' + e.message); }
+}
+
+async function loadPaymentLogs() {
+    try {
+        var resp = await fetch('/api/payments/logs?token=' + encodeURIComponent(token));
+        var data = await resp.json();
+        var container = document.getElementById('pay-log-list');
+        if (!data.logs || data.logs.length === 0) {
+            container.innerHTML = '<div style="color:#999;font-size:13px;">暂无发布记录</div>';
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < data.logs.length; i++) {
+            var l = data.logs[i];
+            var undone = l.action === 'undone';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:12px;border-bottom:1px solid #f5f5f5;' + (undone ? 'opacity:0.5;text-decoration:line-through;' : '') + '">' +
+                '<span>' + l.created_at + ' | ¥' + l.amount + ' ×' + l.room_count + '户 | ' + escHtml(l.period_text) + '</span>' +
+                (undone ? '<span style="color:#999;">已撤销</span>' : '<button class="btn-sm btn-danger" onclick="undoPublish(' + l.id + ')">撤销</button>') +
+                '</div>';
+        }
+        container.innerHTML = html;
+    } catch (e) {}
+}
+
+async function undoPublish(logId) {
+    if (!confirm('确认撤销该次物业费发布？将删除对应的缴费记录。')) return;
+    try {
+        var resp = await fetch('/api/payments/undo/' + logId + '?token=' + encodeURIComponent(token), { method: 'POST' });
+        var data = await resp.json();
+        if (!resp.ok) { alert(data.detail); return; }
+        showPublishToast('已撤销，删除了 ' + data.deleted + ' 条记录', 'success');
+        loadPaymentQuery();
+    } catch (e) { alert('撤销失败: ' + e.message); }
+}
+
+// --- 消息通知 ---
+async function refreshUnreadBadge() {
+    try {
+        var resp = await fetch('/api/notifications/unread-count?token=' + encodeURIComponent(token));
+        var data = await resp.json();
+        var count = data.unread || 0;
+        var badge = document.getElementById('admin-badge');
+        if (!badge || badge.offsetParent === null) badge = document.getElementById('resident-badge');
+        if (badge) {
+            badge.textContent = count > 0 ? (count > 99 ? '99+' : count) : '';
+            badge.style.display = count > 0 ? 'flex' : 'none';
+        }
+    } catch (e) {}
+}
+
+function toggleNotifyDropdown(event) {
+    event.stopPropagation();
+    var dd = document.getElementById('notify-dropdown');
+    if (dd.classList.contains('active')) {
+        dd.classList.remove('active');
+    } else {
+        dd.classList.add('active');
+        loadNotifyList();
+    }
+}
+
+async function loadNotifyList() {
+    try {
+        var resp = await fetch('/api/notifications?token=' + encodeURIComponent(token));
+        var data = await resp.json();
+        var container = document.getElementById('notify-list');
+        if (!data.notifications || data.notifications.length === 0) {
+            container.innerHTML = '<div class="notify-empty">暂无通知</div>';
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < data.notifications.length; i++) {
+            var n = data.notifications[i];
+            html += '<div class="notify-item' + (n.is_read ? '' : ' unread') + '" onclick="markNotifyRead(' + n.id + ')">' +
+                '<div class="ntitle">' + escHtml(n.title) + '</div>' +
+                '<div class="ncontent">' + escHtml(n.content) + '</div>' +
+                '<div class="ntime">' + n.created_at + '</div>' +
+                '</div>';
+        }
+        container.innerHTML = html;
+    } catch (e) {}
+}
+
+async function markNotifyRead(nid) {
+    await fetch('/api/notifications/' + nid + '/read?token=' + encodeURIComponent(token), { method: 'POST' });
+    refreshUnreadBadge();
+    loadNotifyList();
+}
+
+// 点击页面其他区域关闭下拉
+document.addEventListener('click', function(e) {
+    var dd = document.getElementById('notify-dropdown');
+    if (dd && dd.classList.contains('active') && !dd.contains(e.target) && !e.target.classList.contains('notify-bell')) {
+        dd.classList.remove('active');
+    }
+});
+
+// 登录后和切换页面时刷新徽标
+var _origLogin = login;
+login = function(role) {
+    _origLogin(role);
+    setInterval(refreshUnreadBadge, 30000);  // 每30秒刷新
+    refreshUnreadBadge();
+};
+
 // ============================================================
 // 管理员仪表盘
 // ============================================================
 
 function switchDashTab(name) {
     document.querySelectorAll('.dash-tab').forEach(function(t, i) {
-        var names = ['chat', 'files', 'owners'];
+        var names = ['chat', 'files', 'owners', 'repairs', 'payquery'];
         t.classList.toggle('active', names[i] === name);
     });
     document.querySelectorAll('.dash-panel').forEach(function(p) { p.classList.remove('active'); });
     document.getElementById('panel-' + name).classList.add('active');
     if (name === 'files') loadFileList();
     if (name === 'owners') loadOwners();
+    if (name === 'repairs') loadRepairList();
+    if (name === 'payquery') loadPaymentQuery();
+}
+
+function switchResidentTab(name) {
+    document.querySelectorAll('#resident-view .dash-tab').forEach(function(t, i) {
+        var names = ['chat', 'announcements', 'payment', 'repair'];
+        t.classList.toggle('active', names[i] === name);
+    });
+    document.querySelectorAll('#resident-view .dash-panel').forEach(function(p) { p.classList.remove('active'); });
+    var panel = document.getElementById('rpanel-' + name);
+    if (panel) panel.classList.add('active');
+    if (name === 'announcements') loadAnnouncementList();
+    if (name === 'payment') loadMyPayments();
+    if (name === 'repair') loadMyRepairs();
 }
 
 // --- 仪表盘聊天 ---

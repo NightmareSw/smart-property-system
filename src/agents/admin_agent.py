@@ -208,6 +208,7 @@ def admin_publish_announcement(title: str, content: str) -> str:
 
     # 写入数据库 + Chroma
     new_id = db.add_announcement(title, content, source_file=filename)
+    db.add_notification("", "新公告发布", f"物业发布了新公告：{title}", "info")
     return f"公告已发布成功！ID={new_id}，文件已保存至 ADVER/{filename}"
 
 
@@ -329,6 +330,64 @@ def admin_delete_account(username: str) -> str:
 
 
 # ============================================================
+# 物业费状态管理工具
+# ============================================================
+
+@tool
+def admin_set_payment_status(pay_id: int, status: str) -> str:
+    """
+    手动设置物业费缴纳状态。
+    pay_id: 物业费记录ID
+    status: 目标状态，可选 'paid'(已缴纳)、'unpaid'(未缴纳)
+    """
+    valid = {"paid": "已缴纳", "unpaid": "未缴纳"}
+    if status not in valid:
+        return f"无效状态，可选: {', '.join(valid.keys())}"
+    ok = db.update_payment_status(pay_id, status,
+        "" if status == "unpaid" else None)
+    return f"记录 ID={pay_id} 已设为「{valid[status]}」" if ok else f"记录 ID={pay_id} 不存在"
+
+
+# ============================================================
+# 报修工单管理工具
+# ============================================================
+
+@tool
+def admin_list_repairs() -> str:
+    """查看全部报修工单列表（含状态、门牌号、内容）"""
+    repairs = db.get_all_repairs()
+    if not repairs:
+        return "暂无报修工单。"
+    status_label = {"pending": "待处理", "processing": "处理中",
+                   "completed": "已完成", "cancelled": "已取消"}
+    lines = []
+    for r in repairs:
+        lines.append(
+            f"[ID:{r['id']}] {r['title']} | 门牌号:{r['room_number']} "
+            f"| 状态:{status_label.get(r['status'], r['status'])} "
+            f"| 提交:{r['created_at']}\n"
+            f"  描述: {r['description']}"
+            f"{' | 备注:' + r['admin_note'] if r.get('admin_note') else ''}"
+        )
+    return "\n\n".join(lines)
+
+
+@tool
+def admin_update_repair(repair_id: int, status: str, admin_note: str) -> str:
+    """
+    更新报修工单状态并添加备注。
+    repair_id: 工单ID; status: 新状态(pending/processing/completed/cancelled);
+    admin_note: 管理员备注（处理说明等）
+    """
+    ok = db.update_repair(repair_id, status, admin_note)
+    status_label = {"pending": "待处理", "processing": "处理中",
+                   "completed": "已完成", "cancelled": "已取消"}
+    if ok:
+        return f"工单 ID={repair_id} 已更新为「{status_label.get(status, status)}」"
+    return f"工单 ID={repair_id} 不存在"
+
+
+# ============================================================
 # 工厂函数
 # ============================================================
 
@@ -357,6 +416,9 @@ def build_admin_agent() -> AgentExecutor:
         admin_add_account,
         admin_update_account,
         admin_delete_account,
+        admin_list_repairs,
+        admin_update_repair,
+        admin_set_payment_status,
     ]
 
     prompt = ChatPromptTemplate.from_messages([
@@ -365,8 +427,9 @@ def build_admin_agent() -> AgentExecutor:
 
 你可以使用以下工具：
 - 公告管理：查看全部、按关键词搜索、AI生成公告草稿、正式发布、新增、修改、删除公告
-- 物业费管理：查看全部、按状态筛选、按门牌号查询、新增记录、标记已缴纳、删除记录
+- 物业费管理：查看全部、按状态筛选、按门牌号查询、新增记录、标记已缴纳、删除记录、手动设置状态(paid/unpaid)
 - 业主管理：查看全部、新增、修改、删除业主信息
+- 报修工单：查看全部工单、更新工单状态+备注
 - 数据库统计：查看系统整体数据概览
 - 管理员账号管理：查看全部账号、新增、修改、删除管理员账号
 

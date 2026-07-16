@@ -94,7 +94,44 @@ def build_resident_agent() -> AgentExecutor:
         import json
         return json.dumps(rows, ensure_ascii=False, indent=2)
 
-    tools = [search_announcements, query_my_payment]
+    # --- 工具 3: 提交报修 ---
+    @tool
+    def submit_repair(title: str, description: str) -> str:
+        """
+        提交一条报修工单。
+
+        title: 报修标题（如"水管漏水"、"空调不制冷"）
+        description: 详细描述（如位置、现象、紧急程度等）
+        """
+        room = _resident_context.get("room_number", "")
+        rid = db.add_repair(room, title, description)
+        return (
+            f"报修工单已提交成功！工单ID={rid}\n"
+            f"标题: {title}\n"
+            f"我们已收到您的报修，物业工作人员将尽快处理。"
+        )
+
+    # --- 工具 4: 查询我的工单 ---
+    @tool
+    def query_my_repairs() -> str:
+        """查询当前住户提交的所有报修工单及处理状态"""
+        room = _resident_context.get("room_number", "")
+        repairs = db.get_repairs_by_room(room)
+        if not repairs:
+            return "您当前没有报修工单。"
+        status_label = {"pending": "待处理", "processing": "处理中",
+                       "completed": "已完成", "cancelled": "已取消"}
+        lines = []
+        for r in repairs:
+            lines.append(
+                f"[ID:{r['id']}] {r['title']} | 状态:{status_label.get(r['status'], r['status'])} "
+                f"| 提交:{r['created_at']}\n"
+                f"  描述: {r['description']}"
+                f"{' | 物业回复:' + r['admin_note'] if r.get('admin_note') else ''}"
+            )
+        return "\n\n".join(lines)
+
+    tools = [search_announcements, query_my_payment, submit_repair, query_my_repairs]
 
     owner = _resident_context.get("owner_name", "住户")
 
@@ -104,8 +141,10 @@ def build_resident_agent() -> AgentExecutor:
 
 你可以使用以下工具：
 - 公告查询（search_announcements）：采用 RAG 语义搜索，不需要精确关键词。
-  住户用自然语言描述需求（如"最近有什么安全方面的消息？"），工具会自动匹配语义最相关的公告。
+  住户用自然语言描述需求，工具会自动匹配语义最相关的公告。
 - 物业费查询（query_my_payment）：查询当前住户自己的物业费缴纳情况。
+- 报修提交（submit_repair）：提交报修工单，需要提供标题和详细描述。
+- 我的工单（query_my_repairs）：查看已提交的报修工单及处理状态。
 
 重要规则：
 1. query_my_payment 返回的是原始JSON数据，你需要将其翻译成住户能看懂的自然语言。

@@ -216,90 +216,23 @@ def search_announcements_rag(query: str, k: int = 4) -> list[dict]:
 
 
 # ============================================================
-# 数据库初始化
+# ============================================================
+# Excel 种子数据读取（仅首次初始化时使用）
 # ============================================================
 
-def init_db():
-    """
-    初始化数据库：
-    - SQLite: 仅存 announcements 表（公告缓存）
-    - Chroma: 公告向量库（RAG 语义搜索）
-    - 业主数据: OWNER/业主信息.xlsx
-    - 物业费数据: OWNER/物业费.xlsx
-    """
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    # --- 建表 ---
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS announcements (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            content TEXT NOT NULL,
-            publish_date TEXT NOT NULL,
-            author TEXT DEFAULT '物业中心'
-        )
-    """)
-
-    # --- 迁移：添加 source_file 列（用于关联 ADVER 文件）---
-    try:
-        cur.execute("ALTER TABLE announcements ADD COLUMN source_file TEXT")
-        print("[property_db] source_file 列已添加")
-    except sqlite3.OperationalError:
-        pass  # 列已存在
-
-    # --- 插入 demo 数据（已存在则跳过）---
-    cur.execute("SELECT COUNT(*) FROM announcements")
-    if cur.fetchone()[0] == 0:
-        # 从 ADVER 文件夹读取公告数据
-        announcements = _load_announcements_from_adver()
-        if announcements:
-            cur.executemany(
-                "INSERT INTO announcements (title, content, publish_date, author) VALUES (?,?,?,?)",
-                announcements
-            )
-            print(f"[property_db] 从 ADVER/ 加载了 {len(announcements)} 条公告")
-        else:
-            print("[property_db] ADVER/ 中无公告文件，跳过")
-
-    conn.commit()
-    conn.close()
-    print("[property_db] SQLite 初始化完成")
-
-    # --- 初始化公告向量库 ---
-    _init_chroma()
-    # 首次运行时 SQLite demo 数据刚插入，同步到 Chroma
-    _seed_chroma()
-
-
-# ============================================================
-# 业主数据 —— 从 OWNER/业主信息.xlsx 读取
-# ============================================================
-
-def get_all_owners() -> list[dict]:
-    """
-    从 Excel 读取业主数据。
-
-    Excel 格式（约定）：
-      门牌号 | 密码 | 姓名 | 电话
-      (第一行为表头，从第二行开始读取)
-
-    返回: [{"room_number": "101", "password": "101001", "owner_name": "张三", "phone": "138..."}, ...]
-    """
+def _read_owners_excel() -> list[dict]:
+    """从 OWNER/业主信息.xlsx 读取业主数据（仅用于首次导入 SQLite）"""
     import openpyxl
-    excel_path = Path(OWNER_EXCEL)
-    if not excel_path.exists():
-        print(f"[property_db] [WARN] 业主 Excel 不存在: {excel_path}")
+    path = Path(OWNER_EXCEL)
+    if not path.exists():
         return []
-
-    wb = openpyxl.load_workbook(str(excel_path), read_only=True)
+    wb = openpyxl.load_workbook(str(path), read_only=True)
     ws = wb.active
-    rows = list(ws.iter_rows(min_row=2, values_only=True))  # 跳过表头
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
     wb.close()
-
     owners = []
     for row in rows:
-        if not row[0]:  # 跳过空行
+        if not row[0]:
             continue
         owners.append({
             "room_number": str(row[0]).strip(),
@@ -310,110 +243,37 @@ def get_all_owners() -> list[dict]:
     return owners
 
 
-# ============================================================
-# 业主 CRUD —— 基于 OWNER/业主信息.xlsx
-# ============================================================
-
-def _save_owners(rows: list[list]):
-    """将业主数据全量写回 Excel"""
+def _read_payments_excel() -> list[tuple]:
+    """从 OWNER/物业费.xlsx 读取物业费数据（仅用于首次导入 SQLite）"""
     import openpyxl
-    path = Path(OWNER_EXCEL)
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append(["门牌号", "密码", "姓名", "电话"])
-    for row in rows:
-        ws.append(list(row))
-    wb.save(str(path))
-
-
-def add_owner(room_number: str, password: str, owner_name: str, phone: str = "") -> bool:
-    """新增业主，门牌号已存在时返回 False"""
-    owners = get_all_owners()
-    for o in owners:
-        if o["room_number"] == str(room_number).strip():
-            return False
-    rows = [[o["room_number"], o["password"], o["owner_name"], o["phone"]]
-            for o in owners]
-    rows.append([str(room_number).strip(), password, owner_name, phone])
-    _save_owners(rows)
-    return True
-
-
-def update_owner(room_number: str, owner_name: str = None, phone: str = None,
-                 password: str = None) -> bool:
-    """更新业主信息，未传的字段保持不变。返回 False 表示门牌号不存在"""
-    owners = get_all_owners()
-    updated = False
-    for o in owners:
-        if o["room_number"] == str(room_number).strip():
-            if owner_name is not None:
-                o["owner_name"] = owner_name
-            if phone is not None:
-                o["phone"] = phone
-            if password is not None:
-                o["password"] = password
-            updated = True
-            break
-    if not updated:
-        return False
-    rows = [[o["room_number"], o["password"], o["owner_name"], o["phone"]]
-            for o in owners]
-    _save_owners(rows)
-    return True
-
-
-def delete_owner(room_number: str) -> bool:
-    """删除业主，返回 False 表示门牌号不存在"""
-    owners = get_all_owners()
-    original_len = len(owners)
-    owners = [o for o in owners if o["room_number"] != str(room_number).strip()]
-    if len(owners) == original_len:
-        return False
-    rows = [[o["room_number"], o["password"], o["owner_name"], o["phone"]]
-            for o in owners]
-    _save_owners(rows)
-    return True
-
-
-# ============================================================
-# 认证
-# ============================================================
-
-def authenticate(room_number: str, password: str) -> dict | None:
-    """
-    验证住户登录 —— 从 OWNER/业主信息.xlsx 中比对门牌号和密码。
-
-    每次调用都会重新读取 Excel，因此修改 Excel 后无需重启服务即可生效。
-    (如果并发量大，可改为缓存 + 文件修改时间检测)
-    """
-    owners = get_all_owners()
-    for owner in owners:
-        if owner["room_number"] == room_number and owner["password"] == password:
-            return {
-                "room_number": owner["room_number"],
-                "owner_name": owner["owner_name"],
-                "phone": owner.get("phone", ""),
-            }
-    return None
-
-
-# ============================================================
-# 管理员数据 —— 从 admin/管理员.xlsx 读取
-# ============================================================
-
-def get_all_admins() -> list[dict]:
-    """
-    从 Excel 读取管理员数据。
-    Excel 格式（约定）：
-      用户名 | 密码 | 姓名 | 角色
-      (第一行为表头，从第二行开始读取)
-    返回: [{"username": "admin", "password": "admin123", "name": "系统管理员", "role": "superadmin"}, ...]
-    """
-    import openpyxl
-    excel_path = Path(ADMIN_EXCEL)
-    if not excel_path.exists():
+    path = Path(PAYMENT_EXCEL)
+    if not path.exists():
         return []
-    wb = openpyxl.load_workbook(str(excel_path), read_only=True)
+    wb = openpyxl.load_workbook(str(path), read_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    wb.close()
+    result = []
+    for row in rows:
+        if not row[0]:
+            continue
+        result.append((
+            str(row[0]).strip(),
+            float(row[1]) if row[1] else 0.0,
+            str(row[2]).strip() if row[2] else "",
+            str(row[3]).strip() if row[3] else "unpaid",
+            str(row[4]).strip() if len(row) > 4 and row[4] else "",
+        ))
+    return result
+
+
+def _read_admins_excel() -> list[dict]:
+    """从 admin/管理员.xlsx 读取管理员数据（仅用于首次导入 SQLite）"""
+    import openpyxl
+    path = Path(ADMIN_EXCEL)
+    if not path.exists():
+        return []
+    wb = openpyxl.load_workbook(str(path), read_only=True)
     ws = wb.active
     rows = list(ws.iter_rows(min_row=2, values_only=True))
     wb.close()
@@ -430,71 +290,323 @@ def get_all_admins() -> list[dict]:
     return admins
 
 
+# ============================================================
+# 数据库初始化
+# ============================================================
+
+def init_db():
+    """
+    初始化数据库：
+    - SQLite: announcements / owners / payments / admins 四张表
+    - 首次启动时从 Excel 导入种子数据
+    - Chroma: 公告向量库（RAG 语义搜索）
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    # --- 建表 ---
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS announcements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            publish_date TEXT NOT NULL,
+            author TEXT DEFAULT '物业中心'
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS owners (
+            room_number TEXT PRIMARY KEY,
+            password TEXT NOT NULL,
+            owner_name TEXT NOT NULL,
+            phone TEXT DEFAULT ''
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_number TEXT NOT NULL,
+            amount REAL NOT NULL,
+            due_date TEXT NOT NULL,
+            status TEXT DEFAULT 'unpaid',
+            paid_date TEXT DEFAULT '',
+            notes TEXT DEFAULT ''
+        )
+    """)
+
+    # --- 迁移：添加 notes 列 ---
+    try:
+        cur.execute("ALTER TABLE payments ADD COLUMN notes TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS admins (
+            username TEXT PRIMARY KEY,
+            password TEXT NOT NULL,
+            name TEXT DEFAULT '',
+            role TEXT DEFAULT 'admin'
+        )
+    """)
+
+    # --- 迁移：添加 source_file 列 ---
+    try:
+        cur.execute("ALTER TABLE announcements ADD COLUMN source_file TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    # --- 公告种子数据（从 ADVER/）---
+    cur.execute("SELECT COUNT(*) FROM announcements")
+    if cur.fetchone()[0] == 0:
+        announcements = _load_announcements_from_adver()
+        if announcements:
+            cur.executemany(
+                "INSERT INTO announcements (title, content, publish_date, author) "
+                "VALUES (?,?,?,?)", announcements)
+            print(f"[property_db] 从 ADVER/ 导入了 {len(announcements)} 条公告")
+
+    # --- 业主种子数据（从 OWNER/业主信息.xlsx）---
+    cur.execute("SELECT COUNT(*) FROM owners")
+    if cur.fetchone()[0] == 0:
+        owners = _read_owners_excel()
+        if owners:
+            cur.executemany(
+                "INSERT INTO owners (room_number, password, owner_name, phone) "
+                "VALUES (?,?,?,?)",
+                [(o["room_number"], o["password"], o["owner_name"], o["phone"])
+                 for o in owners])
+            print(f"[property_db] 从 Excel 导入了 {len(owners)} 户业主")
+
+    # --- 物业费种子数据（从 OWNER/物业费.xlsx）---
+    cur.execute("SELECT COUNT(*) FROM payments")
+    if cur.fetchone()[0] == 0:
+        payments = _read_payments_excel()
+        if payments:
+            cur.executemany(
+                "INSERT INTO payments (room_number, amount, due_date, status, paid_date, notes) "
+                "VALUES (?,?,?,?,?,'')", payments)
+            print(f"[property_db] 从 Excel 导入了 {len(payments)} 条物业费记录")
+
+    # --- 管理员种子数据（从 admin/管理员.xlsx）---
+    cur.execute("SELECT COUNT(*) FROM admins")
+    if cur.fetchone()[0] == 0:
+        admins = _read_admins_excel()
+        if admins:
+            cur.executemany(
+                "INSERT INTO admins (username, password, name, role) VALUES (?,?,?,?)",
+                [(a["username"], a["password"], a["name"], a["role"]) for a in admins])
+            print(f"[property_db] 从 Excel 导入了 {len(admins)} 个管理员账号")
+
+    # --- 通知表 ---
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_number TEXT DEFAULT '',
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            type TEXT DEFAULT 'info',
+            is_read INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    # --- 报修工单表 ---
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS repairs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_number TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            admin_note TEXT DEFAULT ''
+        )
+    """)
+
+    # --- 物业费操作日志表 ---
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS payment_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action TEXT NOT NULL,
+            admin_name TEXT DEFAULT '',
+            room_count INTEGER DEFAULT 0,
+            amount REAL DEFAULT 0,
+            period_text TEXT DEFAULT '',
+            payment_ids TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+    print("[property_db] SQLite 初始化完成")
+
+    # --- 初始化公告向量库 ---
+    _init_chroma()
+    # 首次运行时 SQLite demo 数据刚插入，同步到 Chroma
+    _seed_chroma()
+
+
+# ============================================================
+# 业主 CRUD —— SQLite
+# ============================================================
+
+def get_all_owners() -> list[dict]:
+    """查询全部业主"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT room_number, password, owner_name, phone FROM owners ORDER BY room_number")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def add_owner(room_number: str, password: str, owner_name: str, phone: str = "") -> bool:
+    """新增业主，门牌号已存在时返回 False"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO owners (room_number, password, owner_name, phone) VALUES (?,?,?,?)",
+            (str(room_number).strip(), password, owner_name, phone))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def update_owner(room_number: str, owner_name: str = None, phone: str = None,
+                 password: str = None) -> bool:
+    """更新业主信息，未传的字段保持不变"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM owners WHERE room_number=?", (str(room_number).strip(),))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return False
+    new_name = owner_name if owner_name is not None else row["owner_name"]
+    new_phone = phone if phone is not None else row["phone"]
+    new_pwd = password if password is not None else row["password"]
+    cur.execute(
+        "UPDATE owners SET owner_name=?, phone=?, password=? WHERE room_number=?",
+        (new_name, new_phone, new_pwd, str(room_number).strip()))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def delete_owner(room_number: str) -> bool:
+    """删除业主"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM owners WHERE room_number=?", (str(room_number).strip(),))
+    deleted = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+# ============================================================
+# 认证
+# ============================================================
+
+def authenticate(room_number: str, password: str) -> dict | None:
+    """验证住户登录"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT room_number, owner_name, phone FROM owners WHERE room_number=? AND password=?",
+        (str(room_number).strip(), password))
+    row = cur.fetchone()
+    conn.close()
+    return {"room_number": row["room_number"], "owner_name": row["owner_name"],
+            "phone": row["phone"]} if row else None
+
+
+# ============================================================
+# 管理员账号 CRUD —— SQLite
+# ============================================================
+
+def get_all_admins() -> list[dict]:
+    """查询全部管理员"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT username, password, name, role FROM admins")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
 def authenticate_admin(username: str, password: str) -> dict | None:
-    """验证管理员登录，成功返回管理员信息字典，失败返回 None"""
-    admins = get_all_admins()
-    for a in admins:
-        if a["username"] == username and a["password"] == password:
-            return a
-    return None
-
-
-def _save_admins(rows: list[list]):
-    """将管理员数据全量写回 Excel"""
-    import openpyxl
-    path = Path(ADMIN_EXCEL)
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append(["用户名", "密码", "姓名", "角色"])
-    for row in rows:
-        ws.append(list(row))
-    wb.save(str(path))
+    """验证管理员登录"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT username, name, role FROM admins WHERE username=? AND password=?",
+        (username, password))
+    row = cur.fetchone()
+    conn.close()
+    return {"username": row["username"], "name": row["name"],
+            "role": row["role"]} if row else None
 
 
 def add_admin(username: str, password: str, name: str = "", role: str = "admin") -> bool:
     """新增管理员，用户名已存在时返回 False"""
-    admins = get_all_admins()
-    for a in admins:
-        if a["username"] == username:
-            return False
-    rows = [[a["username"], a["password"], a["name"], a["role"]] for a in admins]
-    rows.append([username, password, name, role])
-    _save_admins(rows)
-    return True
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO admins (username, password, name, role) VALUES (?,?,?,?)",
+            (username, password, name, role))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        return False
 
 
 def update_admin(username: str, password: str = None, name: str = None,
                  role: str = None) -> bool:
-    """更新管理员信息，未传的字段保持不变。返回 False 表示用户名不存在"""
-    admins = get_all_admins()
-    updated = False
-    for a in admins:
-        if a["username"] == username:
-            if password is not None:
-                a["password"] = password
-            if name is not None:
-                a["name"] = name
-            if role is not None:
-                a["role"] = role
-            updated = True
-            break
-    if not updated:
+    """更新管理员信息"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM admins WHERE username=?", (username,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
         return False
-    rows = [[a["username"], a["password"], a["name"], a["role"]] for a in admins]
-    _save_admins(rows)
+    new_pwd = password if password is not None else row["password"]
+    new_name = name if name is not None else row["name"]
+    new_role = role if role is not None else row["role"]
+    cur.execute(
+        "UPDATE admins SET password=?, name=?, role=? WHERE username=?",
+        (new_pwd, new_name, new_role, username))
+    conn.commit()
+    conn.close()
     return True
 
 
 def delete_admin(username: str) -> bool:
-    """删除管理员，返回 False 表示用户名不存在"""
-    admins = get_all_admins()
-    original_len = len(admins)
-    admins = [a for a in admins if a["username"] != username]
-    if len(admins) == original_len:
-        return False
-    rows = [[a["username"], a["password"], a["name"], a["role"]] for a in admins]
-    _save_admins(rows)
-    return True
+    """删除管理员"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM admins WHERE username=?", (username,))
+    deleted = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
 
 
 # ============================================================
@@ -660,83 +772,62 @@ def parse_uploaded_file(filepath: str) -> tuple:
 
 
 # ============================================================
-# 物业费 CRUD —— 基于 OWNER/物业费.xlsx（AdminAgent 全权限）
+# 物业费 CRUD —— SQLite
 # ============================================================
-
-def _load_payments_xl() -> list[list]:
-    """
-    读取物业费 Excel，返回每一行的原始列表（含表头行索引信息）。
-
-    Excel 格式：门牌号 | 金额 | 截止日期 | 状态 | 缴纳日期
-    第一行为表头，从第二行开始是数据。
-    """
-    import openpyxl
-    path = Path(PAYMENT_EXCEL)
-    if not path.exists():
-        return []
-    wb = openpyxl.load_workbook(str(path))
-    ws = wb.active
-    rows = list(ws.iter_rows(min_row=2, values_only=True))
-    wb.close()
-    return rows
-
-
-def _save_payments_xl(header: list, rows: list[list]):
-    """将数据写回物业费 Excel（全量覆写）"""
-    import openpyxl
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append(header)
-    for row in rows:
-        ws.append(list(row))
-    wb.save(str(Path(PAYMENT_EXCEL)))
-
 
 def get_all_payments() -> list[dict]:
     """查询全部物业费记录"""
-    rows = _load_payments_xl()
-    results = []
-    for i, row in enumerate(rows):
-        if not row[0]:
-            continue
-        results.append({
-            "id": i + 1,                     # 行号即 ID
-            "room_number": str(row[0]).strip(),
-            "amount": float(row[1]) if row[1] else 0.0,
-            "due_date": str(row[2]).strip() if row[2] else "",
-            "status": str(row[3]).strip() if row[3] else "unpaid",
-            "paid_date": str(row[4]).strip() if len(row) > 4 and row[4] else "",
-        })
-    return results
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM payments ORDER BY id")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
 
 
 def get_payment_by_room(room_number: str) -> list[dict]:
-    """
-    按门牌号查询物业费记录。
-
-    这是 ResidentAgent → AdminAgent 跨 Agent 通信的核心函数。
-    """
-    all_rows = get_all_payments()
-    return [r for r in all_rows if r["room_number"] == str(room_number).strip()]
+    """按门牌号查询物业费"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM payments WHERE room_number=? ORDER BY id",
+                (str(room_number).strip(),))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
 
 
 def get_payments_by_status(status: str) -> list[dict]:
-    """按缴费状态筛选物业费记录（paid / unpaid / overdue）"""
-    all_rows = get_all_payments()
-    return [r for r in all_rows if r.get("status", "") == status]
+    """按缴费状态筛选物业费记录"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM payments WHERE status=? ORDER BY id", (status,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
 
 
 def get_db_stats() -> dict:
     """获取数据库统计信息"""
-    import sqlite3
     conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     cur = conn.cursor()
+
     cur.execute("SELECT COUNT(*) FROM announcements")
     ann_count = cur.fetchone()[0]
-    conn.close()
 
-    payments = get_all_payments()
-    owners = get_all_owners()
+    cur.execute("SELECT COUNT(*) FROM owners")
+    owner_count = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM payments")
+    pay_count = cur.fetchone()[0]
+
+    cur.execute("SELECT status, COUNT(*) FROM payments GROUP BY status")
+    status_counts = {row["status"]: row["COUNT(*)"] for row in cur.fetchall()}
+
+    conn.close()
 
     chroma_count = 0
     try:
@@ -748,53 +839,245 @@ def get_db_stats() -> dict:
     return {
         "announcements": ann_count,
         "chroma_vectors": chroma_count,
-        "payments": len(payments),
-        "paid": sum(1 for p in payments if p.get("status") == "paid"),
-        "unpaid": sum(1 for p in payments if p.get("status") == "unpaid"),
-        "overdue": sum(1 for p in payments if p.get("status") == "overdue"),
-        "owners": len(owners),
+        "payments": pay_count,
+        "paid": status_counts.get("paid", 0),
+        "unpaid": status_counts.get("unpaid", 0),
+        "overdue": status_counts.get("overdue", 0),
+        "owners": owner_count,
     }
 
 
-def add_payment(room_number: str, amount: float, due_date: str, status: str = "unpaid") -> int:
-    """新增物业费记录（追加到 Excel 末尾）"""
-    import openpyxl
-    path = Path(PAYMENT_EXCEL)
-    wb = openpyxl.load_workbook(str(path))
-    ws = wb.active
-    new_row_idx = ws.max_row + 1
-    ws.append([str(room_number), amount, due_date, status, ""])
-    wb.save(str(path))
-    return new_row_idx - 1  # 减去表头行
+def add_payment(room_number: str, amount: float, due_date: str,
+                status: str = "unpaid", notes: str = "") -> int:
+    """新增物业费记录，返回新记录的 id"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO payments (room_number, amount, due_date, status, notes) "
+        "VALUES (?,?,?,?,?)",
+        (str(room_number).strip(), amount, due_date, status, notes))
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return new_id
 
 
 def update_payment_status(pay_id: int, status: str, paid_date: str = None) -> bool:
-    """更新缴费状态（按行号定位）"""
-    rows = _load_payments_xl()
-    idx = pay_id - 1  # ID = 行号，转为0-based
-    if idx < 0 or idx >= len(rows):
-        return False
-    row = list(rows[idx])
-    row[3] = status
-    row[4] = paid_date or datetime.now().strftime("%Y-%m-%d")
-    header = ["门牌号", "金额", "截止日期", "状态", "缴纳日期"]
-    all_rows = [list(r) for r in rows]
-    all_rows[idx] = row
-    _save_payments_xl(header, all_rows)
-    return True
+    """更新缴费状态"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    pd = paid_date or datetime.now().strftime("%Y-%m-%d")
+    cur.execute("UPDATE payments SET status=?, paid_date=? WHERE id=?",
+                (status, pd, pay_id))
+    updated = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
 
 
 def delete_payment(pay_id: int) -> bool:
-    """删除物业费记录（按行号删除）"""
-    rows = _load_payments_xl()
-    idx = pay_id - 1
-    if idx < 0 or idx >= len(rows):
+    """删除物业费记录"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM payments WHERE id=?", (pay_id,))
+    deleted = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+# ============================================================
+# 消息通知
+# ============================================================
+
+def add_notification(room_number: str, title: str, content: str, ntype: str = "info") -> int:
+    """新增通知，room_number 为空表示全员通知"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute(
+        "INSERT INTO notifications (room_number, title, content, type, created_at) "
+        "VALUES (?,?,?,?,?)",
+        (room_number, title, content, ntype, now))
+    conn.commit()
+    nid = cur.lastrowid
+    conn.close()
+    return nid
+
+
+def get_notifications(room_number: str = "", include_public: bool = True) -> list[dict]:
+    """获取通知列表。include_public=False 时仅显示该住户专属通知（隐私保护）"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    if include_public:
+        cur.execute(
+            "SELECT * FROM notifications WHERE room_number=? OR room_number='' "
+            "ORDER BY id DESC LIMIT 50", (room_number,))
+    else:
+        cur.execute(
+            "SELECT * FROM notifications WHERE room_number=? "
+            "ORDER BY id DESC LIMIT 50", (room_number,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_unread_count(room_number: str, include_public: bool = True) -> int:
+    """获取未读通知数量"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    if include_public:
+        cur.execute(
+            "SELECT COUNT(*) FROM notifications "
+            "WHERE is_read=0 AND (room_number=? OR room_number='')", (room_number,))
+    else:
+        cur.execute(
+            "SELECT COUNT(*) FROM notifications "
+            "WHERE is_read=0 AND room_number=?", (room_number,))
+    count = cur.fetchone()[0]
+    conn.close()
+    return count
+
+
+def mark_notification_read(nid: int) -> bool:
+    """标记通知为已读"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("UPDATE notifications SET is_read=1 WHERE id=?", (nid,))
+    updated = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
+# ============================================================
+# 报修工单
+# ============================================================
+
+def add_repair(room_number: str, title: str, description: str) -> int:
+    """住户提交报修，返回工单ID"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute(
+        "INSERT INTO repairs (room_number, title, description, status, created_at, updated_at) "
+        "VALUES (?,?,?,'pending',?,?)",
+        (room_number, title, description, now, now))
+    conn.commit()
+    rid = cur.lastrowid
+    conn.close()
+    return rid
+
+
+def get_all_repairs() -> list[dict]:
+    """管理员查看全部工单"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM repairs ORDER BY id DESC")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_repairs_by_room(room_number: str) -> list[dict]:
+    """住户查看自己的工单"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM repairs WHERE room_number=? ORDER BY id DESC",
+                (str(room_number).strip(),))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def update_repair(repair_id: int, status: str = None, admin_note: str = None) -> bool:
+    """管理员更新工单状态/备注"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM repairs WHERE id=?", (repair_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
         return False
-    all_rows = [list(r) for r in rows]
-    del all_rows[idx]
-    header = ["门牌号", "金额", "截止日期", "状态", "缴纳日期"]
-    _save_payments_xl(header, all_rows)
+    new_status = status if status else row["status"]
+    new_note = admin_note if admin_note is not None else row["admin_note"]
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute(
+        "UPDATE repairs SET status=?, admin_note=?, updated_at=? WHERE id=?",
+        (new_status, new_note, now, repair_id))
+    conn.commit()
+    conn.close()
     return True
+
+
+# ============================================================
+# 物业费操作日志与撤销
+# ============================================================
+
+def add_payment_log(action: str, admin_name: str, room_count: int, amount: float,
+                    period_text: str, payment_ids: list[int]) -> int:
+    """记录物业费发布/撤销操作，返回日志ID"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute(
+        "INSERT INTO payment_logs (action, admin_name, room_count, amount, "
+        "period_text, payment_ids, created_at) VALUES (?,?,?,?,?,?,?)",
+        (action, admin_name, room_count, amount, period_text,
+         ",".join(str(i) for i in payment_ids), now))
+    conn.commit()
+    lid = cur.lastrowid
+    conn.close()
+    return lid
+
+
+def get_payment_logs(limit: int = 20) -> list[dict]:
+    """获取最近的物业费操作日志"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM payment_logs ORDER BY id DESC LIMIT ?", (limit,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def undo_payment_log(log_id: int) -> dict:
+    """撤销指定日志对应的物业费发布操作，返回撤销信息"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM payment_logs WHERE id=?", (log_id,))
+    log = cur.fetchone()
+    if not log:
+        conn.close()
+        return None
+    if log["action"] != "publish":
+        conn.close()
+        return {"error": "仅可撤销发布操作"}
+
+    ids = [int(i) for i in log["payment_ids"].split(",") if i]
+    deleted = 0
+    for pid in ids:
+        cur.execute("DELETE FROM payments WHERE id=?", (pid,))
+        deleted += cur.rowcount
+
+    # 将日志标记为已撤销
+    cur.execute("UPDATE payment_logs SET action='undone' WHERE id=?", (log_id,))
+    conn.commit()
+    conn.close()
+
+    return {
+        "log_id": log_id,
+        "deleted": deleted,
+        "period": log["period_text"],
+        "room_count": log["room_count"],
+    }
 
 
 # ============================================================
