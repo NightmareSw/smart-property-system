@@ -14,10 +14,9 @@ from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 
 from src.DeepSeek_v4_pro import deepseek_v4_pro
+from src.DeepSeek_r1_7b import deepseek_r1
 from src.resilience import safe_chroma_search
 import src.property_db as db
-
-_llm = deepseek_v4_pro
 
 # 住户上下文（登录时由 app.py 注入）
 _resident_context: dict = {}
@@ -34,8 +33,13 @@ def set_resident_context(room_number: str, owner_name: str, password: str):
 # 工厂函数
 # ============================================================
 
-def build_resident_agent() -> AgentExecutor:
-    """构建住户客服 Agent（只读公告 + 可查询自己的物业费）"""
+def build_resident_agent(llm=None, memory=None) -> AgentExecutor:
+    """构建住户客服 Agent（只读公告 + 可查询自己的物业费）。
+
+    llm: 可选，传入自定义 LLM 实例（默认 deepseek_v4_pro），用于降级切换本地模型
+    memory: 可选，传入已有 ConversationBufferMemory，用于降级时继承对话历史
+    """
+    _llm = llm or deepseek_v4_pro
 
     # --- 工具 1: 语义搜索公告（RAG）---
     @tool
@@ -152,13 +156,46 @@ def build_resident_agent() -> AgentExecutor:
 3. 语气亲切、有礼貌，像真正的物业客服一样。
 4. 住户问公告时，用 search_announcements 工具并将用户的自然语言原意作为参数传入。
 5. 不要编造信息。
+
+【情感感知与标记规则】
+6. 识别用户消息中的情绪，根据不同情绪调整回应策略：
+   - 负面情绪（愤怒/沮丧/不满）：先表达理解和歉意（如"非常理解您的心情""很抱歉给您带来不便"），
+     再提供解决方案。语气要格外温和，避免官腔。
+   - 紧急情绪（关键词含"漏水""漏电""着火""煤气""电梯坠落""停电""停水"等）：
+     首先安抚"请保持冷静"，然后建议住户立即拨打物业24小时值班电话 400-888-9999，
+     同时引导其通过 submit_repair 提交紧急工单。
+   - 正面情绪（感谢/表扬/满意）：真诚感谢户主的认可，表示会继续努力。
+   - 中性情绪：保持标准客服语气，友好热情。
+7. 不要在回复中直接说出情绪分析结果（如"我检测到你很愤怒"），而是自然地运用上述策略。
+8. 对于反复表达不满的住户，主动表示"我会将您的情况反馈给物业经理，优先为您处理"。
+9. 在你的回复末尾，必须添加一行情感标签。根据用户本轮消息的原始情绪，选择 [sentiment:正面]、
+   [sentiment:中性] 或 [sentiment:负面] 之一附加在回复最后。这行标签仅供系统后台使用，不要向用户解释它的含义。
+
+【信息熵反问机制】
+10. 在调用任何工具之前，先评估用户Query的信息完整度（信息熵）：
+    - 指代不明（如"那个""这事""之前那个"）：无法确定具体指向什么
+    - 意图缺失（如"帮我查一下""帮我看看"）：未说明要查什么
+    - 条件不足（如"我要报修"但未提供标题和描述）：工具需要参数但用户未提供
+    - 时间模糊（如"最近的""之前的"）：时间范围不明确
+    - 复合意图（如"缴费还有那个公告"）：多个意图杂糅，无法确定优先级
+11. 当信息熵过高时，遵循以下策略：
+    a. ⛔ 禁止调用任何工具 —— 此时调用工具必然得到不相关结果，浪费资源
+    b. 不要给出笼统回复（如"请问有什么可以帮您？"），而是针对缺失信息提出具体的引导性反问：
+       - 列出可能选项让用户选择："您是想查公告通知、物业费缴纳情况，还是报修进度呢？"
+       - 追问关键参数："请问大概是哪方面的公告？比如停水停电、物业费、还是社区活动？"
+       - 确认指代："您是指上次查询的物业费，还是最近的报修工单呢？"
+    c. 可结合对话历史判断 —— 如果上一轮用户刚问过物业费，本轮"那上个月的呢？"熵值低，直接查询
+    d. 反问数量控制在1-2个，避免连环追问
+12. 当触发反问（未调用任何工具）时，在回复末尾附加 [entropy:high] 标签；
+    正常回答时附加 [entropy:low] 标签。情感标签和熵标签以空格分隔。
         """),
         MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
 
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    if memory is None:
+        memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     agent = create_tool_calling_agent(_llm, tools, prompt)
     return AgentExecutor(agent=agent, tools=tools, memory=memory, verbose=True,
                          max_iterations=5, handle_parsing_errors=True)

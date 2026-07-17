@@ -14,10 +14,9 @@ from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 
 from src.DeepSeek_v4_pro import deepseek_v4_pro
+from src.DeepSeek_r1_7b import deepseek_r1
 from src.resilience import llm_breaker, retry_db
 import src.property_db as db
-
-_llm = deepseek_v4_pro
 
 
 # ============================================================
@@ -397,11 +396,63 @@ def admin_update_repair(repair_id: int, status: str, admin_note: str) -> str:
 
 
 # ============================================================
+# 情感分析统计工具
+# ============================================================
+
+@tool
+def admin_sentiment_stats(hours: int = 24) -> str:
+    """
+    查看住户情感分析统计数据：正/中/负面情绪分布、平均情感分数、最近负面消息列表。
+    hours: 统计最近多少小时的数据（默认24小时）
+    """
+    stats = db.get_sentiment_stats(hours)
+    if stats["total"] == 0:
+        return "暂无情感分析数据（该时间段内无住户对话记录）。"
+
+    pct_neg = round(stats["negative"] / stats["total"] * 100, 1) if stats["total"] else 0
+    pct_pos = round(stats["positive"] / stats["total"] * 100, 1) if stats["total"] else 0
+
+    entropy = stats.get("entropy_triggers", 0)
+    entropy_pct = round(entropy / stats["total"] * 100, 1) if stats["total"] else 0
+
+    lines = [
+        f"=== 住户情感分析（最近{hours}小时） ===",
+        f"总对话: {stats['total']} 条",
+        f"正面: {stats['positive']} 条 ({pct_pos}%) | 中性: {stats['neutral']} 条 | 负面: {stats['negative']} 条 ({pct_neg}%)",
+        f"平均情感分数: {stats['avg_score']}（0=消极, 0.5=中性, 1=积极）",
+        f"信息熵反问触发: {entropy} 次（{entropy_pct}%）— Agent识别到模糊Query后反问澄清",
+    ]
+
+    if entropy > 0 and entropy_pct > 20:
+        lines.append("⚠ 信息熵反问占比较高，住户Query模糊度偏高，建议优化引导提示或公告内容覆盖面。")
+
+    if stats.get("recent"):
+        lines.append(f"\n--- 最近负面消息（{len(stats['recent'])}条）---")
+        for r in stats["recent"]:
+            msg = r["message"][:60] + "..." if len(r["message"]) > 60 else r["message"]
+            lines.append(
+                f"• {r['room_number']}室 | 分数:{r['score']:.2f} | {r['created_at']}"
+                f"{' | 熵反问' if r.get('entropy_high') else ''}\n"
+                f"  \"{msg}\""
+            )
+
+    if pct_neg > 30:
+        lines.append("\n⚠ 负面情绪占比超过30%，建议关注并主动联系相关住户。")
+
+    return "\n".join(lines)
+
+
+# ============================================================
 # 工厂函数
 # ============================================================
 
-def build_admin_agent() -> AgentExecutor:
-    """构建管理员 Agent（全权限 CRUD）"""
+def build_admin_agent(llm=None, memory=None) -> AgentExecutor:
+    """构建管理员 Agent（全权限 CRUD）。
+
+    llm: 可选，传入自定义 LLM 实例（默认 deepseek_v4_pro），用于降级切换本地模型
+    memory: 可选，传入已有 ConversationBufferMemory，用于降级时继承对话历史
+    """
+    _llm = llm or deepseek_v4_pro
     tools = [
         admin_list_announcements,
         admin_add_announcement,
@@ -428,6 +479,7 @@ def build_admin_agent() -> AgentExecutor:
         admin_list_repairs,
         admin_update_repair,
         admin_set_payment_status,
+        admin_sentiment_stats,
     ]
 
     prompt = ChatPromptTemplate.from_messages([
@@ -441,6 +493,7 @@ def build_admin_agent() -> AgentExecutor:
 - 报修工单：查看全部工单、更新工单状态+备注
 - 数据库统计：查看系统整体数据概览
 - 管理员账号管理：查看全部账号、新增、修改、删除管理员账号
+- 情感分析统计：查看住户对话的正/负面情绪分布、平均情感分数、最近负面消息
 
 【公告生成与发布流程（重要·必须遵守）】
 1. 当管理员要求写公告时，调用 admin_generate_announcement(topic, details)。
@@ -460,7 +513,8 @@ def build_admin_agent() -> AgentExecutor:
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
 
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    if memory is None:
+        memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     agent = create_tool_calling_agent(_llm, tools, prompt)
     return AgentExecutor(agent=agent, tools=tools, memory=memory, verbose=True,
                          max_iterations=5, handle_parsing_errors=True)

@@ -120,6 +120,35 @@ body { font-family: 'Microsoft YaHei', Arial, sans-serif; background: linear-gra
 .notify-item .ncontent { font-size: 12px; color: #888; }
 .notify-item .ntime { font-size: 11px; color: #bbb; margin-top: 4px; }
 .notify-empty { padding: 24px; text-align: center; color: #999; font-size: 13px; }
+
+/* 工单编辑弹窗 */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 200; justify-content: center; align-items: center; }
+.modal-overlay.active { display: flex; }
+.modal-box { background: #fff; border-radius: 12px; padding: 0; width: 440px; max-width: 90vw; box-shadow: 0 12px 40px rgba(0,0,0,0.25); overflow: hidden; }
+.modal-header { padding: 16px 20px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+.modal-header h3 { font-size: 16px; color: #333; margin: 0; }
+.modal-header .modal-close { background: none; border: none; font-size: 20px; color: #999; cursor: pointer; padding: 0 4px; line-height: 1; }
+.modal-header .modal-close:hover { color: #333; }
+.modal-body { padding: 20px; }
+.modal-body label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-bottom: 8px; }
+.modal-body textarea { width: 100%; height: 90px; border: 1px solid #ddd; border-radius: 8px; padding: 10px; font-size: 13px; resize: vertical; font-family: inherit; }
+.modal-body textarea:focus { border-color: #4facfe; outline: none; box-shadow: 0 0 0 3px rgba(79,172,254,0.12); }
+.status-tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+.status-tab { flex: 1; padding: 10px 6px; text-align: center; border: 2px solid #e0e0e0; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; background: #fafafa; transition: 0.15s; color: #888; }
+.status-tab:hover { border-color: #b0d4ff; background: #f0f7ff; }
+.status-tab.selected { color: #fff; }
+.status-tab[data-status="pending"].selected { background: #f39c12; border-color: #f39c12; }
+.status-tab[data-status="processing"].selected { background: #4facfe; border-color: #4facfe; }
+.status-tab[data-status="completed"].selected { background: #27ae60; border-color: #27ae60; }
+.status-tab[data-status="cancelled"].selected { background: #95a5a6; border-color: #95a5a6; }
+.status-tab[data-status="paid"].selected { background: #27ae60; border-color: #27ae60; }
+.status-tab[data-status="unpaid"].selected { background: #f39c12; border-color: #f39c12; }
+.modal-footer { padding: 0 20px 20px; display: flex; gap: 10px; justify-content: flex-end; }
+.modal-footer button { padding: 9px 24px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: 0.15s; }
+.modal-footer .btn-cancel { background: #eee; color: #666; }
+.modal-footer .btn-cancel:hover { background: #ddd; }
+.modal-footer .btn-save { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #fff; }
+.modal-footer .btn-save:hover { box-shadow: 0 4px 12px rgba(79,172,254,0.4); }
 </style>
 </head>
 <body>
@@ -719,22 +748,40 @@ async function loadRepairList() {
     } catch (e) {}
 }
 
+var _repairEditId = null, _repairEditStatus = '';
+
 function showRepairEdit(id, status, note) {
-    var newStatus = prompt('新状态 (pending/processing/completed/cancelled):', status);
-    if (!newStatus) return;
-    var newNote = prompt('备注（可选）:', note);
-    updateRepairStatus(id, newStatus, newNote || '');
+    _repairEditId = id;
+    _repairEditStatus = status;
+    document.getElementById('rm-id').textContent = id;
+    document.getElementById('rm-note').value = note || '';
+    selectRepairStatus(status);
+    document.getElementById('repair-modal').classList.add('active');
 }
 
-async function updateRepairStatus(id, status, note) {
+function selectRepairStatus(status) {
+    _repairEditStatus = status;
+    var tabs = document.querySelectorAll('#rm-status-tabs .status-tab');
+    for (var i = 0; i < tabs.length; i++) {
+        tabs[i].classList.toggle('selected', tabs[i].dataset.status === status);
+    }
+}
+
+function closeRepairModal() {
+    document.getElementById('repair-modal').classList.remove('active');
+}
+
+async function saveRepairUpdate() {
+    var note = document.getElementById('rm-note').value.trim();
     try {
-        var resp = await fetch('/api/repairs/' + id + '?token=' + encodeURIComponent(token), {
+        var resp = await fetch('/api/repairs/' + _repairEditId + '?token=' + encodeURIComponent(token), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: status, admin_note: note })
+            body: JSON.stringify({ status: _repairEditStatus, admin_note: note })
         });
         var data = await resp.json();
         if (!resp.ok) { alert(data.detail); return; }
+        closeRepairModal();
         loadRepairList();
     } catch (e) { alert('更新失败: ' + e.message); }
 }
@@ -788,7 +835,7 @@ async function loadPaymentQuery() {
                         '<div style="display:flex;align-items:center;gap:6px;">' +
                         '<span style="color:' + sc + ';font-weight:600;">' + (statusLabel[p.status] || p.status) + '</span>' +
                         (p.paid_date ? '<span style="color:#999;">' + p.paid_date + '</span>' : '') +
-                        '<button class="btn-sm btn-edit" style="margin-left:4px;" onclick="event.stopPropagation();togglePayStatus(' + p.id + ',\'' + p.status + '\')">切换</button>' +
+                        '<button class="btn-sm btn-edit" style="margin-left:4px;" onclick="event.stopPropagation();showPayStatusEdit(' + p.id + ',\'' + p.status + '\',' + p.amount + ',\'' + escAttr(p.due_date) + '\',\'' + escAttr(g.room_number) + '\')">切换</button>' +
                         '</div></div>';
                 }
                 html += '</div>';
@@ -839,18 +886,40 @@ function showPublishToast(msg, type) {
     setTimeout(function() { el.className = 'toast'; }, 4000);
 }
 
-async function togglePayStatus(payId, currentStatus) {
-    var newStatus = currentStatus === 'paid' ? 'unpaid' : 'paid';
-    var label = newStatus === 'paid' ? '已缴纳' : '未缴纳';
-    if (!confirm('将记录 ID=' + payId + ' 设为「' + label + '」？')) return;
+var _payEditId = null, _payEditStatus = '';
+
+function showPayStatusEdit(payId, currentStatus, amount, dueDate, room) {
+    _payEditId = payId;
+    _payEditStatus = currentStatus;
+    document.getElementById('ps-id').textContent = payId;
+    document.getElementById('ps-info').textContent =
+        room + '室 | ' + amount + ' 元 | 截止:' + dueDate;
+    selectPayStatus(currentStatus);
+    document.getElementById('paystatus-modal').classList.add('active');
+}
+
+function selectPayStatus(status) {
+    _payEditStatus = status;
+    var tabs = document.querySelectorAll('#ps-status-tabs .status-tab');
+    for (var i = 0; i < tabs.length; i++) {
+        tabs[i].classList.toggle('selected', tabs[i].dataset.status === status);
+    }
+}
+
+function closePayStatusModal() {
+    document.getElementById('paystatus-modal').classList.remove('active');
+}
+
+async function savePayStatusUpdate() {
     try {
         var resp = await fetch('/api/payments/set-status?token=' + encodeURIComponent(token), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pay_id: payId, status: newStatus })
+            body: JSON.stringify({ pay_id: _payEditId, status: _payEditStatus })
         });
         var data = await resp.json();
         if (!resp.ok) { alert(data.detail); return; }
+        closePayStatusModal();
         showPublishToast('状态已更新', 'success');
         loadPaymentQuery();
     } catch (e) { alert('操作失败: ' + e.message); }
@@ -1263,6 +1332,56 @@ function escHtml(s) {
 function escAttr(s) {
     return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;');
 }
+
 </script>
+<!-- 工单状态更新弹窗 -->
+<div class="modal-overlay" id="repair-modal">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>工单 #<span id="rm-id"></span> — 更新状态</h3>
+            <button class="modal-close" onclick="closeRepairModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <label>选择新状态</label>
+            <div class="status-tabs" id="rm-status-tabs">
+                <div class="status-tab" data-status="pending" onclick="selectRepairStatus('pending')">&#128994; 待处理</div>
+                <div class="status-tab" data-status="processing" onclick="selectRepairStatus('processing')">&#128993; 处理中</div>
+                <div class="status-tab" data-status="completed" onclick="selectRepairStatus('completed')">&#9989; 已完成</div>
+                <div class="status-tab" data-status="cancelled" onclick="selectRepairStatus('cancelled')">&#10060; 已取消</div>
+            </div>
+            <label>备注（可选）</label>
+            <textarea id="rm-note" placeholder="添加处理备注..."></textarea>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closeRepairModal()">取消</button>
+            <button class="btn-save" onclick="saveRepairUpdate()">确认更新</button>
+        </div>
+    </div>
+</div>
+
+<!-- 物业费状态更新弹窗 -->
+<div class="modal-overlay" id="paystatus-modal">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>物业费记录 #<span id="ps-id"></span> — 更新状态</h3>
+            <button class="modal-close" onclick="closePayStatusModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="margin-bottom:12px;font-size:13px;color:#555;">
+                <span id="ps-info"></span>
+            </div>
+            <label>选择新状态</label>
+            <div class="status-tabs" id="ps-status-tabs">
+                <div class="status-tab" data-status="unpaid" onclick="selectPayStatus('unpaid')">&#128993; 未缴纳</div>
+                <div class="status-tab" data-status="paid" onclick="selectPayStatus('paid')">&#9989; 已缴纳</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closePayStatusModal()">取消</button>
+            <button class="btn-save" onclick="savePayStatusUpdate()">确认更新</button>
+        </div>
+    </div>
+</div>
+
 </body>
 </html>

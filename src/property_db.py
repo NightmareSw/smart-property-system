@@ -442,6 +442,25 @@ def init_db():
         )
     """)
 
+    # --- 情感分析日志表 ---
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sentiment_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_number TEXT DEFAULT '',
+            message TEXT NOT NULL,
+            score REAL DEFAULT 0.5,
+            label TEXT DEFAULT 'neutral',
+            entropy_high INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    # --- 迁移：添加 entropy_high 列 ---
+    try:
+        cur.execute("ALTER TABLE sentiment_logs ADD COLUMN entropy_high INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
     # --- 物业费操作日志表 ---
     cur.execute("""
         CREATE TABLE IF NOT EXISTS payment_logs (
@@ -1095,6 +1114,85 @@ def undo_payment_log(log_id: int) -> dict:
         "deleted": deleted,
         "period": log["period_text"],
         "room_count": log["room_count"],
+    }
+
+
+# ============================================================
+# 情感分析日志
+# ============================================================
+
+def add_sentiment_log(room_number: str, message: str, score: float, label: str,
+                      entropy_high: bool = False) -> int:
+    """记录一条情感分析结果，可选标记是否触发了信息熵反问"""
+    conn = _get_conn()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO sentiment_logs (room_number, message, score, label, entropy_high, created_at) "
+        "VALUES (?,?,?,?,?,?)",
+        (room_number, message, round(score, 4), label, int(entropy_high),
+         datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    sid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return sid
+
+
+def get_sentiment_stats(hours: int = 24) -> dict:
+    """
+    获取情感分析统计数据。
+    hours: 统计最近多少小时的数据（默认24小时）
+    返回: {total, positive, neutral, negative, avg_score, timeline}
+    """
+    conn = _get_conn()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    since = (datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+             if hours <= 0 else
+             "")
+    if hours > 0:
+        from datetime import timedelta
+        since = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+    cur.execute("SELECT COUNT(*) as cnt FROM sentiment_logs WHERE created_at >= ?", (since,))
+    total = cur.fetchone()["cnt"]
+
+    if total == 0:
+        conn.close()
+        return {"total": 0, "positive": 0, "neutral": 0, "negative": 0, "avg_score": 0, "recent": []}
+
+    cur.execute(
+        "SELECT label, COUNT(*) as cnt FROM sentiment_logs "
+        "WHERE created_at >= ? GROUP BY label", (since,))
+    label_counts = {"positive": 0, "neutral": 0, "negative": 0}
+    for row in cur.fetchall():
+        label_counts[row["label"]] = row["cnt"]
+
+    cur.execute(
+        "SELECT AVG(score) as avg_score FROM sentiment_logs WHERE created_at >= ?", (since,))
+
+    avg_score = cur.fetchone()["avg_score"] or 0
+
+    cur.execute(
+        "SELECT room_number, score, label, message, entropy_high, created_at "
+        "FROM sentiment_logs WHERE created_at >= ? AND label = 'negative' "
+        "ORDER BY created_at DESC LIMIT 10", (since,))
+    recent = [dict(r) for r in cur.fetchall()]
+
+    cur.execute(
+        "SELECT COUNT(*) as cnt FROM sentiment_logs "
+        "WHERE created_at >= ? AND entropy_high = 1", (since,))
+    entropy_count = cur.fetchone()["cnt"]
+
+    conn.close()
+    return {
+        "total": total,
+        "positive": label_counts["positive"],
+        "neutral": label_counts["neutral"],
+        "negative": label_counts["negative"],
+        "avg_score": round(avg_score, 4),
+        "entropy_triggers": entropy_count,
+        "recent": recent,
     }
 
 

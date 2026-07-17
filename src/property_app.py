@@ -37,6 +37,7 @@ from langchain.agents import AgentExecutor
 import src.property_db as db
 from src.agents import build_admin_agent, build_resident_agent, set_resident_context
 from src.resilience import format_error, CircuitBreakerOpenError
+from src.DeepSeek_r1_7b import deepseek_r1 as _fallback_llm
 
 app = FastAPI(title="物业多Agent系统", version="2.0.0")
 
@@ -189,7 +190,7 @@ async def login(req: LoginRequest):
 
 @app.post("/chat/admin", response_model=ChatResponse)
 async def chat_admin(req: ChatRequest):
-    """管理员 Agent 对话接口"""
+    """管理员 Agent 对话接口（本地模型降级）"""
     executor = _admin_sessions.get(req.token)
     if not executor:
         raise HTTPException(401, detail="未登录或会话已过期")
@@ -199,8 +200,21 @@ async def chat_admin(req: ChatRequest):
         result = await asyncio.to_thread(executor.invoke, {"input": req.input})
         output = result.get("output", "（无响应）")
     except Exception as e:
-        print(f"[admin_chat] 错误: {e}")
-        raise HTTPException(500, detail=str(e))
+        print(f"[admin_chat] 云端调用失败: {e}，尝试降级到本地模型")
+        try:
+            fallback_executor = build_admin_agent(
+                llm=_fallback_llm, memory=executor.memory)
+            result = await asyncio.to_thread(
+                fallback_executor.invoke, {"input": req.input})
+            output = result.get("output", "")
+            output = (
+                "⚠️ 云端 AI 服务暂时不可达，已切换至本地备用模型，响应速度和精度可能略有下降。\n\n"
+                + output
+            )
+            _admin_sessions[req.token] = fallback_executor
+        except Exception as e2:
+            print(f"[admin_chat] 本地降级也失败: {e2}")
+            raise HTTPException(500, detail="AI 服务暂时不可用，请稍后重试")
 
     return ChatResponse(
         output=output,
@@ -211,14 +225,15 @@ async def chat_admin(req: ChatRequest):
 
 @app.post("/chat/resident", response_model=ChatResponse)
 async def chat_resident(req: ChatRequest):
-    """住户客服 Agent 对话接口"""
+    """住户客服 Agent 对话接口（LLM 情感标签 + 本地模型降级）"""
     executor = _resident_sessions.get(req.token)
     if not executor:
         raise HTTPException(401, detail="未登录或会话已过期")
 
     ctx = _resident_contexts.get(req.token, {})
+    room = ctx.get("room_number", "")
     set_resident_context(
-        room_number=ctx.get("room_number", ""),
+        room_number=room,
         owner_name=ctx.get("owner_name", ""),
         password=ctx.get("password", ""),
     )
@@ -226,10 +241,55 @@ async def chat_resident(req: ChatRequest):
     start = time.time()
     try:
         result = await asyncio.to_thread(executor.invoke, {"input": req.input})
-        output = result.get("output", "（无响应）")
+        raw_output = result.get("output", "（无响应）")
     except Exception as e:
-        print(f"[resident_chat] 错误: {e}")
-        raise HTTPException(500, detail=str(e))
+        print(f"[resident_chat] 云端调用失败: {e}，尝试降级到本地模型")
+        try:
+            # 重建 Agent，注入本地 R1 模型，继承对话记忆
+            fallback_executor = build_resident_agent(
+                llm=_fallback_llm, memory=executor.memory)
+            result = await asyncio.to_thread(
+                fallback_executor.invoke, {"input": req.input})
+            raw_output = result.get("output", "")
+            raw_output = (
+                "⚠️ 云端 AI 服务暂时不可达，已切换至本地备用模型，响应速度和精度可能略有下降。\n\n"
+                + raw_output
+            )
+            _resident_sessions[req.token] = fallback_executor
+        except Exception as e2:
+            print(f"[resident_chat] 本地降级也失败: {e2}")
+            raise HTTPException(500, detail="AI 服务暂时不可用，请稍后重试")
+
+    # 解析 LLM 标签: [sentiment:xxx] [entropy:high/low]
+    import re
+    sentiment_label = "neutral"
+    sentiment_score = 0.5
+    entropy_high = False
+
+    # 情感标签
+    match = re.search(r'\[sentiment:(正面|中性|负面)\]', raw_output)
+    if match:
+        label_cn = match.group(1)
+        sentiment_label = {"正面": "positive", "中性": "neutral", "负面": "negative"}[label_cn]
+        sentiment_score = {"positive": 0.85, "neutral": 0.5, "negative": 0.15}[sentiment_label]
+
+    # 信息熵标签
+    if re.search(r'\[entropy:high\]', raw_output):
+        entropy_high = True
+
+    # 剥离所有系统标签
+    output = re.sub(r'\s*\[sentiment:(?:正面|中性|负面)\]\s*', '', raw_output)
+    output = re.sub(r'\s*\[entropy:(?:high|low)\]\s*', '', output).rstrip()
+
+    if not output:
+        output = raw_output  # 防止全部剥离后为空
+
+    # 日志写入
+    try:
+        db.add_sentiment_log(room, req.input[:200], sentiment_score, sentiment_label,
+                           entropy_high=entropy_high)
+    except Exception:
+        pass
 
     return ChatResponse(
         output=output,
@@ -337,6 +397,18 @@ async def mark_read(nid: int, token: str):
         raise HTTPException(401, detail="未登录")
     db.mark_notification_read(nid)
     return {"success": True}
+
+
+# ============================================================
+# 情感分析统计接口
+# ============================================================
+
+@app.get("/api/sentiment/stats")
+async def sentiment_stats(token: str, hours: int = 24):
+    """管理员查看情感分析统计数据"""
+    if token not in _admin_sessions:
+        raise HTTPException(401, detail="未登录或权限不足")
+    return db.get_sentiment_stats(hours)
 
 
 # ============================================================
